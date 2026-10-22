@@ -1,6 +1,11 @@
+## 0.2.0
+
+### Added
+- Automatic risk-first Sol/Astra execution for bounded read-only delegates, available in both hosts through the route skill. Includes native model receipts, failure handling and a Codex bridge for Claude. Active coordinator model selection remains controlled by the host.
+
 # Changelog
 
-## 0.1.7 — 2026-10-22
+## 0.1.7 â€” 2026-10-22
 
 ### Added
 - Native Codex manifest selecting the Codex skills and hooks, including a Windows hook command.

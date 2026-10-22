@@ -26,3 +26,15 @@ Claude-native agents keep their selected Claude model. Sol/Astra routing is only
 Record the work item's classification and brief reason with its existing handoff or decision evidence. Record the actual model only when the host exposes it; otherwise mark it unverified. A model name in an artifact is not proof of independent review or a reason to waive acceptance checks.
 
 References: [Codex subagent model controls](https://learn.chatgpt.com/docs/agent-configuration/subagents), [GPT-6.1 Sol](https://developers.openai.com/api/docs/models/gpt-6.1-sol).
+
+## Automatic execution (0.2.0)
+
+Invoke `/veera:route` in Claude or `$veera:route` in Codex with a bounded read-only brief. Both installed plugins expose this skill globally. The runtime is `python3 PACKAGE/scripts/model_router.py --host codex|claude --cwd CHECKOUT --task-file BRIEF.txt`. `--plan` classifies without a model call.
+
+The runtime applies risk-first deterministic classification. Recognized routine briefs select Sol; consequential terms, mixed tasks and unknown briefs select Astra. A failure never selects a cheaper fallback. It calls the packaged Codex CLI with explicit model/effort, read-only sandbox and no approval bypass. Claude requires an installed, signed-in Codex CLI for these OpenAI delegates; it does not impersonate a Claude-native model or install a gateway.
+
+Every item has a fresh context and does not resume or adopt an existing owner. The receipt distinguishes selection from verification using only the exact newly created Codex session's native turn context. No model is allowed to assert its own identity as evidence. Tasks that need writes remain with the coordinator. The plugin cannot automatically change the active Codex/Claude chat model through a hook; this feature automatically switches delegate execution, not the composer selection.
+
+Confinement: the native read-only sandbox constrains file/shell writes. The delegate inherits configured host tools/connectors; the read-only instruction for external services is cooperative, not enforced by this plugin. Review the bounded brief and use a host tool policy that disallows mutations when strict external confinement is required. Do not send this delegate authorization to mutate an external service.
+
+Host validation on Windows: direct router execution verified both model choices in native Codex turn records. A nested invocation from a restricted Codex shell failed; the bridge does not relax that shell policy. Claude-host validation is pending because its account returned HTTP 429 weekly usage_limit_reached. Thus installation and direct runtime verification do not establish end-to-end availability in every host session. If the host exposes model-aware native delegation, use the router --plan result with that supported control under existing delegation authority. Otherwise report the unavailable integration; never launch outside a denied sandbox to work around it.

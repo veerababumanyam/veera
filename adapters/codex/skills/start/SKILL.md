@@ -22,3 +22,5 @@ Use the package_root and python_executable returned by the trusted bootstrap hoo
 ## Model selection
 
 Read `docs/model-routing.md` under the resolved package root. Apply `docs/model-policy.json` before each bounded work item: Codex Sol for light work, Astra for important work. Select through supported host controls, report unavailable required models, and do not claim this text switches the current model. Claude keeps its selected native model. Preserve task ownership and existing delegation authority.
+
+For already-authorized read-only specialist work, use `scripts/model_router.py` with a bounded task file instead of selecting a model manually. It automatically executes Sol for recognized routine work and Astra for consequential or uncertain work. See `docs/model-routing.md`. Never share owner capabilities, transfer owner writes or bypass a denied action through this bridge.

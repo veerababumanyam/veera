@@ -11,7 +11,7 @@
       "name": "veera",
       "source": "./",
       "description": "Session-scoped Build/Fix delivery with task memory, verification gates and host adapters.",
-      "version": "0.1.9"
+      "version": "0.2.0"
     }
   ]
 }
