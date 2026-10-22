@@ -1,5 +1,6 @@
 """Owned worktrees and single-attempt, non-force publication for Veera."""
 import contextlib
+import copy
 from platform_runtime import file_lock
 import json
 import os
@@ -74,6 +75,7 @@ def validate_inputs(root, scope):
 
 
 def release_policy(state):
+    d.require(state['contract'].get('delivery_mode', 'publish') == 'publish', 'Local verification prohibits release preparation, reconciliation and publication')
     policy = state['contract'].get('release', {})
     d.require(policy.get('branch') == 'main' and policy.get('push_authorized') is True, 'Release needs explicit main/remote push authorization')
     d.require(re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]*', policy.get('remote', '')), 'Use a configured remote name')
@@ -83,12 +85,65 @@ def release_policy(state):
     return policy
 
 
-def version_value(path):
-    text = path.read_text()
-    value = json.loads(text)['version'] if path.suffix == '.json' else text.strip()
+def cargo_version(text):
+    """Accept one literal workspace version and return its exact source span."""
+    try:
+        import tomllib
+    except ImportError as error:
+        raise d.DeliveryError('Cargo workspace versions require Python 3.11+; no dependency is installed automatically') from error
+    try:
+        data = tomllib.loads(text)
+    except ValueError as error:
+        raise d.DeliveryError('Invalid or ambiguous Cargo.toml') from error
+    workspace = data.get('workspace', {})
+    package = workspace.get('package', {}) if isinstance(workspace, dict) else {}
+    value = package.get('version') if isinstance(package, dict) else None
+    d.require(isinstance(value, str), 'Cargo.toml requires a literal [workspace.package] version')
+    # Restrict to an explicit canonical table and single-line unescaped literal.
+    # Parsing first rejects duplicate keys/tables; validating the substituted document
+    # prevents table-like text in multiline strings from being mistaken for a key.
+    header = re.search(r'^\[workspace\.package\][ \t]*(?:#[^\r\n]*)?\r?$', text, re.M)
+    d.require(header is not None, 'Use an explicit [workspace.package] version table')
+    end = re.search(r'^[ \t]*\[', text[header.end():], re.M)
+    stop = header.end() + end.start() if end else len(text)
+    matches = list(re.finditer(r'''^[ \t]*version[ \t]*=[ \t]*(["'])([0-9]+\.[0-9]+\.[0-9]+)\1[ \t]*(?:#[^\r\n]*)?\r?$''', text[header.end():stop], re.M))
+    d.require(len(matches) == 1 and matches[0][2] == value, 'Only one plain literal Cargo workspace version is supported')
+    match = matches[0]
+    span = (header.end() + match.start(2), header.end() + match.end(2))
+    probe = text[:span[0]] + '0.0.0-veera-probe' + text[span[1]:]
+    expected = copy.deepcopy(data)
+    expected['workspace']['package']['version'] = '0.0.0-veera-probe'
+    d.require(tomllib.loads(probe) == expected, 'Ambiguous Cargo workspace version location')
+    return value, span
+
+
+def version_text(path, text):
+    if path.name == 'Cargo.toml':
+        value = cargo_version(text)[0]
+    else:
+        value = json.loads(text)['version'] if path.suffix == '.json' else text.strip()
+    d.require(isinstance(value, str), 'Version must be a plain x.y.z string')
     match = re.fullmatch(r'(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)', value)
     d.require(match is not None, 'Only plain x.y.z patch versions supported; complex release schemes need a project adapter')
     return value, '.'.join([match[1], match[2], str(int(match[3]) + 1)])
+
+
+def version_value(path):
+    text = path.read_bytes().decode('utf-8') if path.name == 'Cargo.toml' else path.read_text()
+    return version_text(path, text)
+
+
+def write_version(path, value):
+    if path.name == 'Cargo.toml':
+        text = path.read_bytes().decode('utf-8')
+        _, (start, end) = cargo_version(text)
+        path.write_bytes((text[:start] + value + text[end:]).encode('utf-8'))
+    elif path.suffix == '.json':
+        data = json.loads(path.read_text())
+        data['version'] = value
+        path.write_text(json.dumps(data, indent=2) + '\n')
+    else:
+        path.write_text(value + '\n')
 
 
 def commit_scope(root, state, message):
@@ -145,14 +200,9 @@ def prepare(root):
         d.require(path.is_relative_to(root) and path.is_file() and not (root / policy['version_file']).is_symlink(), 'Version target missing or unsafe')
         old, new = version_value(path)
         main_text = git(root, 'show', target + ':' + policy['version_file'])
-        main_version = json.loads(main_text)['version'] if path.suffix == '.json' else main_text.strip()
+        main_version = version_text(path, main_text)[0]
         d.require(old == main_version, 'Task must not modify the release version; patch increment is based on integrated main')
-        if path.suffix == '.json':
-            data = json.loads(path.read_text())
-            data['version'] = new
-            path.write_text(json.dumps(data, indent=2) + '\n')
-        else:
-            path.write_text(new + '\n')
+        write_version(path, new)
         state['release_prepared'] = {'remote_tip': remote_tip, 'local_tip': local_tip, 'integrated_tip': target, 'version_from': old, 'version_to': new, 'version_file': policy['version_file']}
         state['checks'] = {}
         state['review'] = None
@@ -166,6 +216,7 @@ def reconcile(root, reason):
     with repository_lock(root), d.locked(root) as directory:
         state = d.load(directory)
         d.active(state)
+        release_policy(state)
         d.require(not state.get('push_attempted'), 'Cannot retry/reconcile automatically after a push attempt')
         d.require(state.get('release_prepared') and reason.strip(), 'Reconciliation needs a prepared release and new evidence')
         d.require(not state.get('running'), 'Check still running')
@@ -173,12 +224,7 @@ def reconcile(root, reason):
         plan = state['release_prepared']
         path = Path(root) / plan['version_file']
         d.require(version_value(path)[0] == plan['version_to'], 'Version differs from prepared value; inspect before reconciliation')
-        if path.suffix == '.json':
-            data = json.loads(path.read_text())
-            data['version'] = plan['version_from']
-            path.write_text(json.dumps(data, indent=2) + '\n')
-        else:
-            path.write_text(plan['version_from'] + '\n')
+        write_version(path, plan['version_from'])
         state['repairs'] += 1
         state['phase'] = 'implement'
         state['status'] = 'active'

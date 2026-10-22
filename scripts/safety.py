@@ -8,7 +8,7 @@ import shlex
 import sys
 import ownership
 STATE = '.veera'
-TERMINAL = {'complete', 'blocked', 'budget-exhausted', 'user-stopped'}
+TERMINAL = {'complete', 'verified-local', 'blocked', 'budget-exhausted', 'user-stopped'}
 
 
 def shell_words(command):

@@ -18,7 +18,7 @@ import selectors
 import uuid
 
 STATE = '.veera'
-TERMINAL = {'complete', 'blocked', 'budget-exhausted', 'user-stopped'}
+TERMINAL = {'complete', 'verified-local', 'blocked', 'budget-exhausted', 'user-stopped'}
 PHASES = ['discover', 'plan', 'implement', 'verify', 'review']
 
 
@@ -138,6 +138,9 @@ def changed(state, current):
 
 def validate_contract(contract, root):
     require(isinstance(contract, dict), 'Contract must be an object')
+    require(contract.get('delivery_mode', 'publish') in ('publish', 'local-verify'), 'Unknown delivery_mode')
+    if contract.get('delivery_mode') == 'local-verify':
+        require('release' not in contract, 'Local verification must omit release; it grants no release authority')
     for key in ('scope', 'criteria', 'checks'):
         require(isinstance(contract.get(key), list) and contract[key], key + ' must be a nonempty list')
     for name in contract['scope']:
@@ -178,13 +181,15 @@ def init(root, mode, request, contract, minutes, hard_minutes=None):
     actual = subprocess.check_output(['git', '-C', str(root), 'rev-parse', '--show-toplevel'], text=True, timeout=10).strip()
     require(Path(actual).resolve() == root, 'Use the repository root')
     validate_contract(contract, root)
+    require(contract.get('delivery_mode') != 'local-verify' or hard_minutes is not None, 'Local verification requires the v2 owned-worktree lifecycle')
     if hard_minutes is not None:
         require(math.isfinite(hard_minutes) and minutes <= hard_minutes <= 480, 'Hard ceiling must cover soft target and be <=480 minutes')
         from git_delivery import owned, release_policy, validate_inputs, git, clean
         metadata = owned(root)
         require(git(root, 'rev-parse', 'HEAD') == metadata['base'], 'Worktree HEAD changed before init; do not absorb unapproved commits into baseline')
         clean(root)
-        release_policy({'contract': contract})
+        if contract.get('delivery_mode', 'publish') == 'publish':
+            release_policy({'contract': contract})
         validate_inputs(root, contract['scope'])
     with locked(root) as directory:
         require(not (directory / 'state.json').exists(), 'Run already exists; budget cannot be reset by init')
@@ -407,10 +412,18 @@ def finish(root):
                 require(path.is_relative_to(Path(root).resolve()) and path.is_file() and hashlib.sha256(path.read_bytes()).hexdigest() == sha, 'Visual evidence changed')
         require(state.get('review') and state['review']['fingerprint'] == fingerprint, 'Missing or stale independent review')
         if state.get('version', 1) >= 2:
-            require(state.get('release_prepared'), 'Release integration/version bump must precede final verification')
             require(not state.get('replan_required'), 'Record PM/Architect/Advisor replan before claiming readiness')
-            state['status'] = 'ready'
-            event(state, 'ready', 'Implementation verified; publication still required, NOT DONE')
+            if state['contract'].get('delivery_mode', 'publish') == 'local-verify':
+                from git_delivery import owned, validate_inputs
+                owned(root)
+                validate_inputs(root, state['contract']['scope'])
+                require(not state.get('release_prepared') and not state.get('push_attempted'), 'Local verification cannot contain release activity')
+                state['status'] = 'verified-local'
+                event(state, 'verified-local', 'Frozen local verification contract satisfied; unpublished, no release or version bump claimed')
+            else:
+                require(state.get('release_prepared'), 'Release integration/version bump must precede final verification')
+                state['status'] = 'ready'
+                event(state, 'ready', 'Implementation verified; publication still required, NOT DONE')
         else:
             state['status'] = 'complete'
             event(state, 'complete', 'Legacy v1 verification complete; publication not claimed')

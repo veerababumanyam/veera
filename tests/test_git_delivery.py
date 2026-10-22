@@ -6,6 +6,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
 import delivery as d
@@ -291,6 +292,240 @@ class GitDeliveryTests(unittest.TestCase):
         with self.assertRaises(d.DeliveryError):
             g.publish(self.root)
         self.assertEqual(g.git(self.remote, 'rev-parse', 'main'), self.initial)
+
+    def local_contract(self):
+        self.contract['delivery_mode'] = 'local-verify'
+        self.contract.pop('release')
+        self.contract['scope'] = ['app.py']
+
+    def local_review(self):
+        d.phase(self.root, 'verify')
+        result = d.check(self.root, 'unit')
+        d.phase(self.root, 'review')
+        d.review(self.root, {'reviewer': 'fixture-independent', 'fingerprint': d.digest(d.snapshot(self.root)), 'approved': True, 'criteria': ['C1'], 'notes': 'Fixture attestation'})
+        return result
+
+    def test_local_verification_without_remote_or_version_authority(self):
+        self.local_contract()
+        g.git(self.root, 'remote', 'remove', 'origin')
+        self.start()
+        self.implement()
+        self.assertEqual(self.local_review()['test_count'], 1)
+        result = d.finish(self.root)
+        self.assertEqual(result['status'], 'verified-local')
+        self.assertIn(result['status'], d.TERMINAL)
+        self.assertNotIn('release_prepared', result)
+        self.assertNotIn('push_attempted', result)
+        self.assertEqual(g.git(self.root, 'rev-parse', 'HEAD'), self.initial)
+        self.assertEqual(g.git(self.remote, 'rev-parse', 'main'), self.initial)
+        self.assertEqual((self.root / 'VERSION').read_text(), '1.2.3\n')
+        self.assertEqual((self.original / 'app.py').read_text(), 'value = 1\n')
+        with self.assertRaises(d.DeliveryError):
+            d.phase(self.root, 'review')
+        self.assertEqual(d.stop(self.root, 'stop')['status'], 'verified-local')
+
+    def test_local_mode_rejects_every_release_operation_before_side_effects(self):
+        self.local_contract()
+        self.start()
+        self.implement()
+        original_git = g.git
+        def read_only_git(root, *args, **kwargs):
+            self.assertIn(args[0], ('rev-parse', 'branch'))
+            return original_git(root, *args, **kwargs)
+        with patch.object(g, 'git', side_effect=read_only_git):
+            for operation in (g.prepare, g.publish, lambda root: g.reconcile(root, 'new main')):
+                with self.subTest(operation=operation), self.assertRaisesRegex(d.DeliveryError, 'Local verification prohibits'):
+                    operation(self.root)
+        self.assertEqual(g.git(self.root, 'rev-parse', 'HEAD'), self.initial)
+
+    def test_local_mode_rejects_release_configuration(self):
+        self.contract['delivery_mode'] = 'local-verify'
+        with self.assertRaisesRegex(d.DeliveryError, 'must omit release'):
+            self.start()
+
+    def assert_local_terminal_hook(self, handler, edit_tool, edit_input, execute_tool, execute_input):
+        import ownership
+        self.enterContext(patch.object(ownership, 'REGISTRY', self.base / 'sessions'))
+        session = 'fixture-terminal-owner'
+        self.root = Path(g.workspace(self.original, 'terminal', session)['root'])
+        self.local_contract()
+        self.start()
+        self.implement()
+        payload = {'session_id': session, 'cwd': str(self.root), 'hook_event_name': 'PreToolUse'}
+        edit = {**payload, 'tool_name': edit_tool, 'tool_input': edit_input(self.root)}
+        self.assertEqual(handler(edit), {}, 'Owned in-scope edit must be allowed during implementation')
+        self.local_review()
+        self.assertEqual(d.finish(self.root)['status'], 'verified-local')
+        for request in (edit, {**payload, 'tool_name': execute_tool, 'tool_input': execute_input}):
+            with self.subTest(tool=request['tool_name']):
+                result = handler(request)['hookSpecificOutput']
+                self.assertEqual(result['permissionDecision'], 'deny')
+                self.assertIn('verified-local', result['permissionDecisionReason'])
+        self.assertEqual(handler({**payload, 'tool_name': 'Read', 'tool_input': {'file_path': str(self.root / 'app.py')}}), {})
+        self.assertEqual(d.status(self.root)['status'], 'verified-local')
+        self.assertEqual((self.root / 'app.py').read_text(), 'value = 2\n')
+
+    def test_claude_hook_denies_source_edits_after_local_verification(self):
+        import safety
+        self.assert_local_terminal_hook(safety.handle, 'Edit', lambda root: {'file_path': str(root / 'app.py'), 'old_string': 'value = 2', 'new_string': 'value = 3'}, 'Bash', {'command': 'python3 app.py'})
+
+    def test_codex_hook_denies_source_patches_after_local_verification(self):
+        self.enterContext(patch.dict(os.environ, {'VEERA_HOST': 'codex'}))
+        import codex_hook
+        self.assert_local_terminal_hook(codex_hook.handle, 'apply_patch', lambda root: {'command': '*** Begin Patch\n*** Update File: ' + str(root / 'app.py') + '\n@@\n-value = 2\n+value = 3\n*** End Patch\n'}, 'exec_command', {'cmd': 'python3 app.py'})
+
+    def test_public_cli_local_init_retains_session_ownership(self):
+        import ownership
+        from session_fixture import cli
+        self.local_contract()
+        self.enterContext(patch.object(ownership, 'REGISTRY', self.base / 'sessions'))
+        self.session_id = 'fixture-local-owner'
+        metadata = d.read_json(self.root / '.veera/workspace.json')
+        metadata['session_id'] = self.session_id
+        d.atomic(self.root / '.veera/workspace.json', metadata)
+        self.capability = ownership.enroll(self.session_id, self.root, metadata['id'])
+        contract_path = self.root / '.veera-artifacts/contract.json'
+        contract_path.parent.mkdir()
+        contract_path.write_text(json.dumps(self.contract))
+        arguments = ('init', '--root', str(self.root), '--mode', 'fix', '--request', 'Correct value locally', '--contract', str(contract_path))
+        owner = self.session_id
+        self.session_id = 'foreign-session'
+        self.assertEqual(cli(self, *arguments).returncode, 2)
+        self.assertFalse((self.root / '.veera/state.json').exists())
+        self.session_id = owner
+        result = cli(self, *arguments)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.implement()
+        self.local_review()
+        result = cli(self, 'finish', '--root', str(self.root))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)['status'], 'verified-local')
+        self.assertEqual(cli(self, 'publish', '--root', str(self.root)).returncode, 2)
+        self.assertEqual(cli(self, 'unbind', '--root', str(self.root)).returncode, 2)
+        self.assertTrue(Path(self.capability).is_file())
+
+    def test_delivery_mode_typo_fails_closed(self):
+        self.contract['delivery_mode'] = 'local'
+        with self.assertRaisesRegex(d.DeliveryError, 'Unknown delivery_mode'):
+            self.start()
+
+    def test_publish_default_still_requires_authority(self):
+        self.contract['release']['push_authorized'] = False
+        with self.assertRaisesRegex(d.DeliveryError, 'authorization'):
+            self.start()
+
+    def test_local_mode_cannot_use_legacy_unowned_lifecycle(self):
+        self.local_contract()
+        with self.assertRaisesRegex(d.DeliveryError, 'owned-worktree'):
+            d.init(self.original, 'fix', 'Fix', self.contract, 1)
+        with self.assertRaises((d.DeliveryError, FileNotFoundError)):
+            d.init(self.original, 'fix', 'Fix', self.contract, 1, 2)
+
+    def test_local_mode_is_frozen_by_contract_checksum(self):
+        self.local_contract()
+        self.start()
+        path = self.root / '.veera/state.json'
+        state = d.read_json(path)
+        state['contract']['delivery_mode'] = 'publish'
+        d.atomic(path, state)
+        with self.assertRaisesRegex(d.DeliveryError, 'integrity'):
+            d.status(self.root)
+
+    def test_local_finish_rejects_zero_count(self):
+        self.local_contract()
+        self.contract['checks'][0]['argv'][-1] = "print('Ran 0 tests')"
+        self.start()
+        self.implement()
+        self.assertEqual(self.local_review()['status'], 'failed')
+        with self.assertRaisesRegex(d.DeliveryError, 'failed or stale'):
+            d.finish(self.root)
+
+    def test_local_finish_rejects_changed_source(self):
+        self.local_contract()
+        self.start()
+        self.implement()
+        self.local_review()
+        (self.root / 'app.py').write_text('value = 3\n')
+        with self.assertRaisesRegex(d.DeliveryError, 'stale'):
+            d.finish(self.root)
+
+    def test_local_finish_rejects_missing_independent_review(self):
+        self.local_contract()
+        self.start()
+        self.implement()
+        d.phase(self.root, 'verify')
+        d.check(self.root, 'unit')
+        d.phase(self.root, 'review')
+        with self.assertRaisesRegex(d.DeliveryError, 'independent review'):
+            d.finish(self.root)
+
+    def test_local_finish_rejects_open_blocker(self):
+        import task_context as c
+        self.local_contract()
+        state = self.start()
+        self.implement()
+        self.local_review()
+        evidence = self.root / '.veera-artifacts/blocker.txt'
+        evidence.parent.mkdir(exist_ok=True)
+        evidence.write_text('Unresolved acceptance issue')
+        c.blocker(self.root, {'run_id': state['run_id'], 'op': 'open', 'family': 'test', 'target': 'unit', 'criteria': ['C1'], 'evidence': [{'path': '.veera-artifacts/blocker.txt', 'sha256': d.hashlib.sha256(evidence.read_bytes()).hexdigest()}]})
+        with self.assertRaises(d.DeliveryError):
+            d.finish(self.root)
+
+    @unittest.skipIf(sys.version_info < (3, 11), 'Cargo TOML parsing requires Python 3.11+')
+    def test_cargo_workspace_prepare_reconcile_preserves_other_text(self):
+        original = '# shared release\n[workspace]\nmembers = []\n[workspace.package] # metadata\nversion = "1.2.3" # keep\nedition = "2021"\n\n[profile.release]\nlto = true\n'
+        # Fixture setup occurs before the task lifecycle; no real repository config.
+        (self.root / 'Cargo.toml').write_text(original)
+        g.git(self.root, 'add', 'Cargo.toml')
+        g.git(self.root, 'commit', '-m', 'Fixture Cargo manifest')
+        tip = g.git(self.root, 'rev-parse', 'HEAD')
+        g.git(self.root, 'push', 'origin', 'HEAD:main')
+        metadata = d.read_json(self.root / '.veera/workspace.json')
+        metadata['base'] = tip
+        d.atomic(self.root / '.veera/workspace.json', metadata)
+        self.contract['scope'] = ['app.py', 'Cargo.toml']
+        self.contract['release']['version_file'] = 'Cargo.toml'
+        self.start()
+        self.implement()
+        g.prepare(self.root)
+        expected = original.replace('"1.2.3"', '"1.2.4"')
+        self.assertEqual((self.root / 'Cargo.toml').read_text(), expected)
+        g.reconcile(self.root, 'Reconfirm latest main')
+        self.assertEqual((self.root / 'Cargo.toml').read_text(), expected)
+
+
+class VersionTests(unittest.TestCase):
+    @unittest.skipIf(sys.version_info < (3, 11), 'Cargo TOML parsing requires Python 3.11+')
+    def test_cargo_changes_only_exact_version_bytes(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'Cargo.toml'
+            original = b"# version 1.2.3\r\n[workspace.package]\r\nversion\t= '1.2.3' # release\r\nedition = '2021'\r\n[dependencies]\r\nexample = '1.2.3'\r\n"
+            path.write_bytes(original)
+            self.assertEqual(g.version_value(path), ('1.2.3', '1.2.4'))
+            g.write_version(path, '1.2.4')
+            self.assertEqual(path.read_bytes(), original.replace(b"version\t= '1.2.3'", b"version\t= '1.2.4'"))
+
+    def test_cargo_refuses_ambiguous_and_complex_forms(self):
+        texts = [
+            '[package]\nversion = "1.2.3"\n',
+            '[workspace.package]\nversion = "1.2.3-alpha"\n',
+            '[workspace.package]\nversion = "01.2.3"\n',
+            '[workspace.package]\nversion = { workspace = true }\n',
+            '[workspace.package]\nversion = "1.2.3"\nversion = "1.2.4"\n',
+            'workspace.package.version = "1.2.3"\n',
+            '[workspace.package]\nversion = """1.2.3"""\n',
+            '[workspace.package]\nversion = "1.2.3"\n[workspace.package]\n',
+            'workspace = "unexpected"\n',
+            'description = """\n[workspace.package]\nversion = "1.2.3"\n"""\n[workspace.package]\nversion = "1.2.3"\n',
+        ]
+        for text in texts:
+            with self.subTest(text=text), self.assertRaises(d.DeliveryError):
+                g.version_text(Path('Cargo.toml'), text)
+
+    def test_existing_version_formats_unchanged(self):
+        self.assertEqual(g.version_text(Path('package.json'), '{"version":"1.2.3"}'), ('1.2.3', '1.2.4'))
+        self.assertEqual(g.version_text(Path('VERSION'), '1.2.3\n'), ('1.2.3', '1.2.4'))
 
 
 if __name__ == '__main__':

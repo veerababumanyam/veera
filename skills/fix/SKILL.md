@@ -10,6 +10,8 @@ Guidance package 0.1.5; explicit bootstrap and persistent ownership, untested an
 
 ## Shared rules
 
+For an explicitly nonpublishing task, freeze `delivery_mode: "local-verify"` and omit `release` before init. In that mode the release/version requirements below do not apply: prohibit release-prepare/reconcile/publish, retain every scope/behavior/count/fingerprint/review/blocker/ownership gate, and finish to terminal `verified-local`. Report "verified locally; unpublished", preserve the binding/worktree/evidence, and never claim published complete/DONE or auto-unbind/archive. Publishing remains the default; never switch an initialized task to local mode.
+
 Read `${CLAUDE_PLUGIN_ROOT}/docs/agent-contract.md` sections Authority and ownership, Session isolation, Bounded contract, Runtime interface, and Evidence and immutable DONE. Read UI acceptance for UI defects, and Selective reasoning, context and repair before delegation or repair. Native/project instructions, permissions and stricter recovery ceilings remain binding.
 
 Own diagnosis through the complete authorized fix, including tests, independent review, patch version and release. An inspection-only request does not authorize edits or publication. Never voluntarily stop at a partial fix or a soft target; continue eligible work without routine approval pauses. Report real blockers rather than fabricate completion. No recursive delegation, nested loops, schedulers, automatic workflows or permission bypasses.
