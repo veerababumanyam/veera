@@ -41,14 +41,18 @@ def clean(root):
 def workspace(root, task, session_id=None):
     root = Path(root).resolve()
     d.require(re.fullmatch(r'[a-z0-9][a-z0-9-]{0,47}', task), 'Task must be a short lowercase slug')
+    if session_id is not None:
+        import ownership
+        d.require(ownership.lookup(session_id) is None, 'Session already bound; do not adopt or overwrite a task')
     d.require(Path(git(root, 'rev-parse', '--show-toplevel')).resolve() == root, 'Use repository root')
     with repository_lock(root):
+        branch = 'veera/' + task
+        target = root.parent / (root.name + '-veera-' + task)
+        if target.exists() or target.is_symlink() or (hasattr(target, 'is_junction') and target.is_junction()):
+            return recover_workspace(root, target, branch, session_id)
         clean(root)
         base = git(root, 'rev-parse', 'refs/heads/main')
         d.require(git(root, 'rev-parse', 'HEAD') == base, 'Start from main or a branch at exactly main; unrelated topic commits must not enter the task')
-        branch = 'veera/' + task
-        target = root.parent / (root.name + '-veera-' + task)
-        d.require(not target.exists(), 'Worktree destination already exists')
         git(root, 'worktree', 'add', '-b', branch, str(target), base)
         metadata = {'id': uuid.uuid4().hex, 'root': str(target), 'original': str(root), 'branch': branch, 'base': base, 'common': str(common(root)), 'created_at': time.time()}
         metadata['session_id'] = session_id
@@ -57,6 +61,44 @@ def workspace(root, task, session_id=None):
             import ownership
             metadata['capability_file'] = ownership.enroll(session_id, target, metadata['id'])
         return metadata
+
+
+def recover_workspace(root, target, branch, session_id):
+    """Finish enrollment of this owner's unchanged pre-init workspace only.
+
+    Called under the original repository lock. Metadata is never rewritten and
+    current main is not a replacement for the recorded creation baseline.
+    """
+    import ownership
+    d.require(session_id is not None, 'Partial workspace recovery requires its original session owner')
+    paths = (target, target / '.git', target / d.STATE, target / d.STATE / 'workspace.json')
+    d.require(not any(p.is_symlink() or (hasattr(p, 'is_junction') and p.is_junction()) for p in paths), 'Partial workspace paths must not be symlinks or junctions')
+    metadata_path = target / d.STATE / 'workspace.json'
+    d.require(metadata_path.is_file(), 'Existing destination has no recoverable workspace metadata')
+    metadata = d.read_json(metadata_path)
+    d.require(isinstance(metadata, dict) and metadata.get('session_id') == session_id, 'Partial workspace belongs to a different session')
+    d.require(metadata.get('root') == str(target) and metadata.get('original') == str(root) and metadata.get('branch') == branch, 'Partial workspace identity differs from requested original/task')
+    d.require(isinstance(metadata.get('id'), str) and re.fullmatch(r'[0-9a-f]{32}', metadata['id']), 'Invalid partial workspace identity')
+    d.require(isinstance(metadata.get('base'), str) and re.fullmatch(r'[0-9a-f]{40,64}', metadata['base']), 'Invalid recorded workspace base')
+    state_path = target / d.STATE / 'state.json'
+    d.require(not state_path.exists() and not state_path.is_symlink(), 'Initialized tasks cannot use partial workspace recovery')
+    d.require((target / '.git').is_file(), 'Recovery requires the original linked worktree')
+    shared = common(root)
+    d.require(metadata.get('common') == str(shared) and common(target) == shared, 'Partial workspace Git repository differs')
+    d.require(Path(git(target, 'rev-parse', '--show-toplevel')).resolve() == target, 'Partial workspace root differs')
+    d.require(git(target, 'branch', '--show-current') == branch, 'Partial workspace branch changed')
+    base = metadata['base']
+    d.require(git(target, 'rev-parse', 'HEAD') == base and git(root, 'rev-parse', 'refs/heads/' + branch) == base, 'Partial workspace HEAD or branch ref changed')
+    d.require(git(root, 'rev-parse', 'HEAD') == base, 'Original checkout moved from recorded workspace base')
+    # Git's registration must independently identify this same path, ref and HEAD.
+    records = git(root, 'worktree', 'list', '--porcelain', '-z').split('\0\0')
+    expected = {'worktree ' + target.as_posix(), 'HEAD ' + base, 'branch refs/heads/' + branch}
+    d.require(any(expected <= set(record.split('\0')) for record in records), 'Partial workspace registration differs')
+    clean(root)
+    clean(target)
+    d.require(ownership.lookup(session_id) is None, 'Session already bound; recovery cannot replace a binding')
+    capability = ownership.enroll(session_id, target, metadata['id'])
+    return {**metadata, 'capability_file': capability, 'recovered': True}
 
 
 def owned(root):

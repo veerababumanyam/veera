@@ -109,6 +109,8 @@ For an explicitly nonpublishing task, freeze `"delivery_mode": "local-verify"` i
 
 ### Safe continuation
 
+If `workspace` created the task worktree and metadata but owner enrollment failed, first resolve the reported host prerequisite through authorized means. The same original owner may then repeat the exact `workspace --root ORIGINAL --task SLUG --session-id ID` command. Recovery accepts only the unchanged recorded original/base, clean linked task worktree, matching Git registration/branch/HEAD and absent task state/binding. Current main may have advanced independently; recovery preserves the recorded base and never changes main or peers. Changed identity, source, refs, symlinks or an initialized task are refused. It enrolls exclusively and returns `recovered: true`; never manufacture metadata, replace another binding or use this path to retry a continuing denial.
+
 `checkpoint --root TASK --reason TEXT` persists an exact source fingerprint and checkpoint ID. `resume --root TASK --file REPORT.json` requires `{checkpoint_id, authorization, reason, additional_minutes}`. It preserves original start/history/repair counters, invalidates prior checks and rejects stale checkpoints or any prior push attempt. A new hard-time allowance requires actual user authorization (host hook asks); JSON text itself is not proof of approval. Routine soft-target replanning uses `decision`, not resume or a fresh run. Legacy v1 saved runs retain their original semantics; the public CLI creates only v2 worktree/release runs.
 
 ## Delivery contract

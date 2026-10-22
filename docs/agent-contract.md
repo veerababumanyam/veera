@@ -96,7 +96,7 @@ python3 "/ABSOLUTE_PACKAGE_ROOT/scripts/delivery.py" SUBCOMMAND
 | Subcommand | Arguments / purpose |
 | --- | --- |
 | `doctor` | Inspect prerequisites; not proof of task success. |
-| `workspace` | `--root ORIGINAL --task SLUG` plus the session flag only; establish the owned sibling worktree, exact-session binding and owner capability from a clean committed authorized root, without shared ignore/config changes. |
+| `workspace` | `--root ORIGINAL --task SLUG` plus the session flag only; establish the owned sibling worktree, exact-session binding and owner capability from a clean committed authorized root, without shared ignore/config changes. After an externally resolved enrollment failure, the same invocation can recover only its original owner's unchanged pre-init worktree/metadata, with no existing binding. Exact recorded original/base, clean source, linked Git registration, branch and HEAD must match; current main may advance but is never substituted for that base. No new owner, metadata rewrite, initialized-task recovery or retry around a continuing denial. |
 | `init` | `--root TASK --mode build\|fix --request TEXT --contract CONTRACT.json --minutes TARGET --hard-minutes HARD_ALLOWANCE`; require workspace metadata and release contract; lock remaining soft/hard allowances (defaults 30/120 before elapsed discovery). |
 | `status` | `--root TASK`; reconcile persisted state, source/evidence, blockers, soft-replanning flag and hard allowance. |
 | `context` | `--root TASK`; compact shared brief/index from existing state, with run/contract identity, revision, current fingerprint, source references/freshness and blockers. |
