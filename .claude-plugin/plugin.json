@@ -1,7 +1,9 @@
 {
   "name": "veera",
-  "version": "0.1.5",
+  "version": "0.1.7",
   "description": "Bounded Build/Fix delivery with explicit acceptance gates, safety hooks and a local live dashboard.",
-  "author": {"name": "Veera contributors"},
+  "author": {
+    "name": "Veera contributors"
+  },
   "license": "MIT"
 }

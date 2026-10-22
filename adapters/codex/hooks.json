@@ -1,6 +1,28 @@
 {
   "hooks": {
-    "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/codex_hook.py\"", "timeout": 10}]}],
-    "PreToolUse": [{"hooks": [{"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/codex_hook.py\"", "timeout": 10}]}]
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${PLUGIN_ROOT}/scripts/codex_hook.py\"",
+            "timeout": 10,
+            "commandWindows": "python3 -c \"import os,sys,runpy; p=os.path.join(os.environ['PLUGIN_ROOT'],'scripts'); sys.path.insert(0,p); runpy.run_path(os.path.join(p,'codex_hook.py'),run_name='__main__')\""
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${PLUGIN_ROOT}/scripts/codex_hook.py\"",
+            "timeout": 10,
+            "commandWindows": "python3 -c \"import os,sys,runpy; p=os.path.join(os.environ['PLUGIN_ROOT'],'scripts'); sys.path.insert(0,p); runpy.run_path(os.path.join(p,'codex_hook.py'),run_name='__main__')\""
+          }
+        ]
+      }
+    ]
   }
 }

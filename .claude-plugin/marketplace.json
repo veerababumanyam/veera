@@ -1,13 +1,17 @@
 {
   "name": "veera-plugins",
-  "metadata": {"description": "Veera task-scoped software delivery plugins and host adapters."},
-  "owner": {"name": "Veera contributors"},
+  "metadata": {
+    "description": "Veera task-scoped software delivery plugins and host adapters."
+  },
+  "owner": {
+    "name": "Veera contributors"
+  },
   "plugins": [
     {
       "name": "veera",
       "source": "./",
       "description": "Session-scoped Build/Fix delivery with task memory, verification gates and host adapters.",
-      "version": "0.1.5"
+      "version": "0.1.7"
     }
   ]
 }

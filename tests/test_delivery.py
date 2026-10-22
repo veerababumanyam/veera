@@ -183,7 +183,12 @@ class DeliveryTests(unittest.TestCase):
             d.status(self.root)
 
     def test_state_symlink_refused(self):
-        (self.root / d.STATE).symlink_to(self.root, target_is_directory=True)
+        try:
+            (self.root / d.STATE).symlink_to(self.root, target_is_directory=True)
+        except OSError as error:
+            if getattr(error, 'winerror', None) == 1314:
+                self.skipTest('Windows symlink privilege is unavailable')
+            raise
         with self.assertRaises(d.DeliveryError):
             self.start()
 
@@ -301,16 +306,19 @@ class DeliveryTests(unittest.TestCase):
         try:
             bootstrap = f"import sys; from pathlib import Path; sys.path.insert(0, {str(Path(d.__file__).parent)!r}); import ownership, delivery; ownership.REGISTRY=Path({str(Path(self.capability).parent)!r}); delivery.main()"
             result = subprocess.run([sys.executable, '-c', bootstrap, 'check', '--root', str(self.root), '--id', 'unit', '--session-id', self.session_id, '--capability-file', self.capability], capture_output=True, text=True, timeout=5)
-            self.assertEqual(json.loads(result.stdout)['reason'], 'output-capture-incomplete')
-            self.assertEqual(result.returncode, 1)
+            # Windows job teardown kills the inherited-pipe holder at launcher
+            # exit; POSIX detached children remain outside the process group.
+            self.assertEqual(json.loads(result.stdout)['reason'], '' if os.name == 'nt' else 'output-capture-incomplete')
+            self.assertEqual(result.returncode, 0 if os.name == 'nt' else 1)
             self.assertIsNone(d.status(self.root).get('running'))
             self.assertLess(time.monotonic() - before, 4)
         finally:
             if pidfile.exists():
                 try:
                     os.kill(int(pidfile.read_text()), 9)
-                except ProcessLookupError:
-                    pass
+                except OSError as error:
+                    if not isinstance(error, ProcessLookupError) and getattr(error, 'winerror', None) != 87:
+                        raise
 
     def test_old_dashboard_cannot_stop_new_run(self):
         self.start()

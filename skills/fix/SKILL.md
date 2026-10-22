@@ -61,3 +61,7 @@ For a requested, permitted dashboard use `dashboard --root TASK --port 0`. Respe
 7. At hard expiry, user stop, denial, exhausted repairs or a genuine blocker with no eligible work, call `stop --root TASK --reason TEXT` and `checkpoint --root TASK --reason TEXT`. Report unresolved criteria, causal uncertainty and exact prerequisites. Use `resume --root TASK --file REPORT.json` only with `checkpoint_id`, actual user approval in `authorization`, `reason` and `additional_minutes` no greater than 120 or stricter limits. Require matching fingerprint, preserve repairs/time history and never reinit. Hard expiry requires new explicit human allowance. Soft expiry alone never justifies unfinished work; its automatic replan flag is cleared by the actual consulted PM decision. No unattended continuation promise.
 
 Return confirmed cause or remaining hypothesis, scoped correction, actual regression/check counts and exits, UI status, reviewer identity, patch version/release and push status, gaps and runtime state. A patch or implementation-ready result is not complete delivery.
+
+## Model selection
+
+Read `docs/model-routing.md` under the resolved package root. Apply `docs/model-policy.json` before each bounded work item: Codex Sol for light work, Astra for important work. Select through supported host controls, report unavailable required models, and do not claim this text switches the current model. Claude keeps its selected native model. Preserve task ownership and existing delegation authority.

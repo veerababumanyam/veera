@@ -17,3 +17,7 @@ If actual hook output, host identity, trusted hook configuration or the configur
 For subsequent separately authorized work, CLI children may need the actual returned `CLAUDE_PLUGIN_DATA` explicitly carried into their environment; hook child environment need not propagate. Claude uses `VEERA_HOST=claude` by default. Ownership lives at `${CLAUDE_PLUGIN_DATA}/veera-v1/claude/sessions/<sha256 session_id>.json`; start must not create a binding. Do not set global configuration or change permissions.
 
 Return only bootstrap success or the specific missing prerequisite without echoing identity/data-directory values into shared artifacts. On success, wait for a separate authorized `/veera:build` or `/veera:fix` task. Neither start nor skill metadata proves the hook is installed, loaded or tested.
+
+## Model selection
+
+Read `docs/model-routing.md` under the resolved package root. Apply `docs/model-policy.json` before each bounded work item: Codex Sol for light work, Astra for important work. Select through supported host controls, report unavailable required models, and do not claim this text switches the current model. Claude keeps its selected native model. Preserve task ownership and existing delegation authority.

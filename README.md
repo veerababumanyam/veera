@@ -16,7 +16,7 @@ Start a new Claude Code session, then invoke `/veera:start` followed by a separa
 - Routing now uses host-provided `CLAUDE_PLUGIN_DATA/veera-v1/claude/sessions`, not the replaceable plugin directory. CLI children must receive the same actual data-directory environment if not inherited. Missing data fails before workspace creation; no silent production fallback.
 - Upgrade migration is explicit and limited to one quiescent owner: `python3 scripts/ownership.py --session-id ID --root TASK --legacy-file EXACT_FILE` with the configured persistent environment. It validates owner/task identity, creates exclusively, rejects conflicts and preserves the source. Never bulk migrate or keep both old/new writers active.
 - Hook error policy: unknown/unbound input returns no-op without project access; failures after exact owner-record classification deny. Host-level process startup failure/timeout uses `onFailure: continue` to avoid breaking unrelated sessions. Native host permissions/sandbox remain essential: this cannot guarantee fail-closed ownership if the interpreter never starts.
-- Codex: a separate adapter lives in `adapters/codex`, with `$veera-start`, portable skills and a trusted-hook template. It uses `VEERA_HOST=codex` and a separate persistent namespace. Codex's unsupported ASK is converted to DENY; known exec commands and patch targets are normalized, unknown mutating tools denied. No trust/sandbox bypass flags or global configuration changes are used.
+- Codex: a separate adapter lives in `adapters/codex`, with `$veera:start`, portable skills and a trusted-hook template. It uses `VEERA_HOST=codex` and a separate persistent namespace. Codex's unsupported ASK is converted to DENY; known exec commands and patch targets are normalized, unknown mutating tools denied. No trust/sandbox bypass flags or global configuration changes are used.
 
 **Real pilot status:** the Claude CLI invocation returned a blocked result (no usable bootstrap context and contract Read permission denied); no denial was bypassed. The Codex invocation failed authentication with HTTP 401; no credentials were read/copied or retry launched. Consequently real end-to-end delivery remains **blocked**, not verified. See `docs/verification-v0.1.5.md`; local adapter tests are not a substitute for trusted host loading and permissions. Installing/authorizing hooks or credentials is a user-owned prerequisite, not something this plugin can self-approve.
 
@@ -50,13 +50,13 @@ Skills now require task-owned artifact/process inventories and scoped cleanup of
 
 ## Requirements and loading
 
-Linux/macOS, Python 3.10+, Git and Claude Code with plugin support. Windows needs WSL. No Python/npm dependencies or network installation are required. Use a trusted, isolated application checkout or worktree; preserve existing work. The controller requires the Git checkout root and refuses submodules/oversized fingerprint inputs rather than silently omitting them.
+Linux/macOS with Python 3.10+, or native Windows with Python 3.12+, Git and a supported Claude Code/Codex host. Windows uses byte-range locks and a kill-on-close job for verification children. No Python/npm dependencies or network installation are required. Use a trusted, isolated application checkout or worktree; preserve existing work. The controller requires the Git checkout root and refuses submodules/oversized fingerprint inputs rather than silently omitting them.
 
 ```bash
 claude --plugin-dir /home/veera/veera --effort medium
 ```
 
-Then use `/veera:build <feature>` or `/veera:fix <problem>`. Loading is session-local; no global installation is performed. Use the absolute path wherever you place this plugin. The plugin intentionally does not select a different model, bypass permissions or globally change effort. Medium is a launch setting, not an unsupported skill frontmatter field. Use higher effort only for a bounded difficult decision, not every action.
+Then use `/veera:build <feature>` or `/veera:fix <problem>`. Loading is session-local; no global installation is performed. Use the absolute path wherever you place this plugin. For Codex, follow `docs/model-routing.md`: Sol for light work and Astra for important work, through supported native model controls. Claude retains its selected native model. The plugin does not bypass permissions or change global model defaults.
 
 ## Central task memory and managed blockers (0.1.2)
 
@@ -186,3 +186,11 @@ python3 /home/veera/veera/tests/browser_smoke.py
 ```
 
 Runtime tests use disposable Git repositories and local subprocesses, not production applications. Browser smoke testing uses installed Chrome headless, including a screenshot; it is not a full accessibility audit. See `docs/verification-v0.1.4.md` for current results and remaining gaps; earlier verification documents preserve previous version records. No real-application autonomous delivery, PM/Architect/Advisor behavioral comparison, universal security guarantee or industry-leading performance claim is implied by runtime unit tests.
+
+## Local v0.1.6 installation repair
+
+The `.codex-plugin/plugin.json` manifest selects `adapters/codex/skills` and `adapters/codex/hooks.json`; Claude retains its own manifest and hooks. Codex commands are `$veera:start`, `$veera:build`, and `$veera:fix`. Review and trust the installed Veera hooks through `/hooks`, then submit `$veera:start` as a standalone prompt. Bootstrap returns actual host identity, persistent data directory, installed package root and Python executable. Installing does not grant hook trust. Start the session in the intended Git checkout. Native Windows requires Python 3.12+ for nonblocking pipe reads.
+
+## Model management (v0.1.7)
+
+Codex bootstrap includes the Sol/Astra policy in `docs/model-policy.json`. GPT-6.1 Sol with low reasoning handles light work; GPT-6 Astra with high reasoning handles consequential work. See `docs/model-routing.md` for classification, native model controls, opt-in profiles, unavailable-model behavior and Claude limitations. Policy injection is not automatic coordinator switching.

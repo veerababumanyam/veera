@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Local, dependency-free delivery state machine. Linux/macOS; not a sandbox."""
+"""Local, dependency-free delivery state machine. Not a sandbox."""
 import argparse
 import contextlib
-import fcntl
+from platform_runtime import file_lock, launch
 import hashlib
 import json
 import math
@@ -65,8 +65,7 @@ def atomic(path, value):
 @contextlib.contextmanager
 def locked(root):
     directory = storage(root)
-    with (directory / 'lock').open('a') as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+    with file_lock(directory / 'lock'):
         yield directory
 
 
@@ -253,6 +252,12 @@ def repair(root, reason):
 
 
 def kill_group(process):
+    if os.name == 'nt':
+        # The launcher owns a kill-on-close job containing all descendants.
+        if process.poll() is None:
+            process.kill()
+        process.wait()
+        return
     try:
         os.killpg(process.pid, signal.SIGTERM)
     except ProcessLookupError:
@@ -293,11 +298,12 @@ def check(root, check_id):
     started = time.time()
     try:
         with log.open('wb') as output:
-            process = subprocess.Popen(spec['argv'], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True, bufsize=0)
+            process = launch(spec['argv'], root)
             os.set_blocking(process.stdout.fileno(), False)
             size, eof, exited_at = 0, False, None
-            with selectors.DefaultSelector() as selector:
-                selector.register(process.stdout, selectors.EVENT_READ)
+            with (contextlib.nullcontext() if os.name == 'nt' else selectors.DefaultSelector()) as selector:
+                if selector is not None:
+                    selector.register(process.stdout, selectors.EVENT_READ)
                 while True:
                     now = time.time()
                     if now >= deadline:
@@ -313,14 +319,21 @@ def check(root, check_id):
                         if now - exited_at >= .5:
                             why = 'output-capture-incomplete'
                             break
-                    for key, _ in selector.select(timeout=.05):
+                    if selector is None:
+                        # Windows selectors only accept sockets, not pipe handles.
+                        time.sleep(.005)
+                        ready = [] if eof else [(None, None)]
+                    else:
+                        ready = selector.select(timeout=.05)
+                    for key, _ in ready:
                         try:
-                            chunk = os.read(key.fd, 65536)
+                            chunk = os.read(process.stdout.fileno(), 65536)
                         except BlockingIOError:
                             continue
                         if not chunk:
                             eof = True
-                            selector.unregister(process.stdout)
+                            if selector is not None:
+                                selector.unregister(process.stdout)
                             continue
                         output.write(chunk[:max(0, limit - size)])
                         size += len(chunk)

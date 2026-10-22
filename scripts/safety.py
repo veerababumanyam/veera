@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Defense-in-depth hook, not an OS sandbox or a shell authorization parser."""
 import json
+import os
 from pathlib import Path
 import re
 import shlex
@@ -8,6 +9,20 @@ import sys
 import ownership
 STATE = '.veera'
 TERMINAL = {'complete', 'blocked', 'budget-exhausted', 'user-stopped'}
+
+
+def shell_words(command):
+    lexer = shlex.shlex(command, posix=True)
+    lexer.whitespace_split = True
+    lexer.commenters = ''
+    if os.name == 'nt':
+        lexer.escape = ''  # PowerShell/Windows paths use literal backslashes.
+    words = list(lexer)
+    # Canonicalize only the known controller path; preserve every other token.
+    controller = Path(__file__).resolve().parent / 'delivery.py'
+    if len(words) > 1 and Path(words[1]).resolve() == controller:
+        words[1] = str(controller)
+    return words
 
 
 def status(root):
@@ -72,7 +87,7 @@ def evaluate(payload):
     if tool == 'Bash':
         raw_command = args.get('command', '')
         try:
-            words = shlex.split(raw_command)
+            words = shell_words(raw_command)
         except ValueError:
             return 'Cannot validate malformed shell command.'
         lexer = shlex.shlex(raw_command, posix=True, punctuation_chars=True)
@@ -94,7 +109,7 @@ def evaluate(payload):
                         return 'Missing owner option value.'
                     value = words[i + 1]
                     del words[i:i + 2]
-                if value != expected:
+                if (Path(value).resolve() != Path(expected).resolve() if flag == '--capability-file' else value != expected):
                     return 'Controller identity does not match the calling host session.'
         # Required approval is recognized independently of other argument order.
         script_path = str(Path(__file__).resolve().parent / 'delivery.py')
@@ -148,7 +163,7 @@ def evaluate(payload):
         # Arbitrary shell can bypass path checks; require the host's approval,
         # rather than claiming this hook is a shell sandbox.
         try:
-            tokens = shlex.split(command)
+            tokens = shell_words(command)
         except ValueError:
             return 'Cannot validate malformed shell command.'
         script = str(Path(__file__).resolve().parent / 'delivery.py')

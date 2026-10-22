@@ -60,3 +60,7 @@ A requested, permitted dashboard uses `dashboard --root TASK --port 0`; respect 
 7. At a hard deadline, user stop, denial, exhausted repairs or a genuine blocker with no eligible work, use `stop --root TASK --reason TEXT` and `checkpoint --root TASK --reason TEXT`; return unmet criteria, checkpoint paths and prerequisites. Resume only via `resume --root TASK --file REPORT.json` with `checkpoint_id`, actual user approval in `authorization`, `reason` and `additional_minutes` no greater than 120 or stricter limits. Require a matching fingerprint; never reset repairs/time history or reinit. Hard-deadline continuation requires new explicit human allowance. A soft target alone never justifies abandonment; its automatic replan flag is cleared by the actual consulted PM decision.
 
 Return scope/change summary, actual checks/counts, UI status, reviewer identity, version/release and push status, gaps and runtime state. Distinguish implemented/ready from complete; never claim installation, cache savings or unrun tests.
+
+## Model selection
+
+Read `docs/model-routing.md` under the resolved package root. Apply `docs/model-policy.json` before each bounded work item: Codex Sol for light work, Astra for important work. Select through supported host controls, report unavailable required models, and do not claim this text switches the current model. Claude keeps its selected native model. Preserve task ownership and existing delegation authority.

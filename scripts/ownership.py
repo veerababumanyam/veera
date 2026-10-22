@@ -58,7 +58,7 @@ def authorize(session_id, root, capability_file):
     record = lookup(session_id)
     if record is None:
         raise ValueError('Session is not enrolled; no task access performed')
-    if str(Path(root).resolve()) != record['root']:
+    if Path(root).resolve() != Path(record['root']).resolve():
         raise ValueError('Requested root is not this session task')
     expected = registry() / (session_key(session_id) + '.json')
     if not capability_file or Path(capability_file).resolve() != expected.resolve():
@@ -80,7 +80,7 @@ def migrate(session_id, root, legacy_file):
     if old.name != key + '.json' or any(p.is_symlink() for p in (old, *old.parents)):
         raise ValueError('Legacy path must name this exact owner record without symlinks')
     record = json.loads(old.read_text())
-    if record.get('session_id') != session_id or record.get('root') != str(Path(root).resolve()):
+    if record.get('session_id') != session_id or not record.get('root') or Path(record['root']).resolve() != Path(root).resolve():
         raise ValueError('Legacy owner/task mismatch')
     metadata = Path(root) / '.veera/workspace.json'
     if metadata.is_symlink() or metadata.parent.is_symlink():

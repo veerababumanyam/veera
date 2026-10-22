@@ -5,7 +5,7 @@ description: Diagnose and remediate one explicitly authorized Veera defect with 
 
 # Veera — Fix (Codex)
 
-Guidance v0.1.5, untested and not installed. Require explicit user invocation after successful exact standalone `/veera:start` bootstrap and a separate authorized fix request. Inspection alone does not authorize remediation/publication, and start never enrolls or grants task authority.
+Guidance v0.1.6. The native Codex manifest selects these skills and the Codex hook adapter. Require explicit user invocation after successful exact standalone `$veera:start` bootstrap and a separate authorized fix request. Inspection alone does not authorize remediation/publication, and start never enrolls or grants task authority.
 
 ## Load shared rules selectively
 
@@ -36,3 +36,11 @@ Every later public root command uses the third form. Never delegate owner capabi
 Native tools remain subject to explicit approval where applicable and/or host sandbox controls. Native exec is not trusted by Veera hooks. Unsupported ASK becomes DENY with human guidance; unknown mutating tools including unsupported `apply_patch` are denied, never routed around through another tool. Missing host facilities or independent roles are blockers, not permission to pretend support.
 
 Return confirmed cause or remaining hypothesis, scoped remedy, actual regression/check counts, UI evidence, real reviewer identity, version/release/push state and outstanding criteria/checkpoints. No installation, smoke success or unmeasured savings claims.
+
+## Installed bootstrap context
+
+Use the package_root and python_executable returned by the trusted bootstrap hook. The hook also supplies the actual session_id, host, persistent plugin_data, and current cwd. These are runtime values, not placeholders. Set CLAUDE_PLUGIN_DATA to that plugin_data and VEERA_HOST=codex in each controller child. Use quoted forward-slash paths on Windows and `python3` for controller commands. If hooks have not been trusted, use the native `/hooks` review flow and submit `$veera:start` again in a new turn; do not fabricate bootstrap context. Choose the user-selected project checkout, not the projectless chat folder.
+
+## Model selection
+
+Read `docs/model-routing.md` under the resolved package root. Apply `docs/model-policy.json` before each bounded work item: Codex Sol for light work, Astra for important work. Select through supported host controls, report unavailable required models, and do not claim this text switches the current model. Claude keeps its selected native model. Preserve task ownership and existing delegation authority.

@@ -1,6 +1,6 @@
 """Owned worktrees and single-attempt, non-force publication for Veera."""
 import contextlib
-import fcntl
+from platform_runtime import file_lock
 import json
 import os
 from pathlib import Path
@@ -24,8 +24,7 @@ def common(root):
 
 @contextlib.contextmanager
 def repository_lock(root):
-    with (common(root) / 'veera-release.lock').open('a') as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    with file_lock(common(root) / 'veera-release.lock', blocking=False):
         yield
 
 
