@@ -198,3 +198,7 @@ The `.codex-plugin/plugin.json` manifest selects `adapters/codex/skills` and `ad
 ## Model management (v0.1.7)
 
 Codex bootstrap includes the Sol/Astra policy in `docs/model-policy.json`. GPT-6.1 Sol with low reasoning handles light work; GPT-6 Astra with high reasoning handles consequential work. See `docs/model-routing.md` for classification, native model controls, opt-in profiles, unavailable-model behavior and Claude limitations. Policy injection is not automatic coordinator switching.
+
+## Automatic Sol/Astra routing in Codex
+
+After installing the plugin, run `python3 PACKAGE/scripts/install_codex_routing.py` as an explicitly authorized setup step (PACKAGE is the installed Veera directory). It registers the two personal roles and the actual Python interpreter without changing parent permissions or model defaults. Open a new Codex session and invoke `$veera:route` with a bounded findings-only brief. Veera classifies the item and dispatches native Sol low or Astra high subagents, then waits for results. The shell never starts a nested Codex process. See `docs/model-routing.md` for scope, evidence and Claude bridge limitations.

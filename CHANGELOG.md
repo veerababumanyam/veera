@@ -1,3 +1,8 @@
+## 0.2.2
+
+### Fixed
+- Codex model routing now dispatches native Sol/Astra subagents instead of launching a nested CLI inside the restricted shell. Adds a safe global role installer and preserves parent permissions.
+
 ## 0.2.0
 
 ### Added

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Automatic Sol/Astra selection for bounded, read-only Codex delegates.
+"""Automatic Sol/Astra selection for bounded, findings-only Codex delegates.
 
 Claude uses this same Codex bridge, never OpenAI IDs in Claude frontmatter.
 No owner adoption, capability transfer, permission bypass or model fallback.
@@ -34,6 +34,20 @@ def select(task):
             'reasoning_effort': policy[tier]['reasoning_effort'],
             'reason': ('Consequential work: ' + risk.group(0)) if risk else
                       ('Recognized routine task' if tier == 'light' else 'Uncertain task; conservative escalation')}
+
+
+def native_plan(task, cwd):
+    selection = select(task)
+    return {'calling_host': 'codex', 'execution_host': 'codex', 'selection': selection,
+            'status': 'dispatch_required', 'actual_model_verified': False,
+            'dispatch': {'tool': 'spawn_agent', 'agent_type': 'veera_' + selection['tier'],
+                         'fork_context': False,
+                         'message': 'Bounded findings-only task. Do not edit, delegate, invoke Veera workflows, '
+                                    'access credentials or other sessions, or call mutating connectors. '
+                                    'Use this authorized source directory for relative source paths: '
+                                    + json.dumps(str(cwd)) + '. Do not assume your inherited cwd is this directory. '
+                                    'Return findings to the parent. Task:\n' + task},
+            'confinement': 'Native subagent inherits parent sandbox, approvals and tools; findings-only instruction is cooperative'}
 
 
 def command(executable, cwd, selection):
@@ -82,6 +96,8 @@ def execute(task, cwd, host, executable=None, timeout=300):
     if not cwd.is_dir():
         raise ValueError('Working directory is required')
     selection = select(task)
+    if host == 'codex':
+        return native_plan(task, cwd)
     executable = executable or find_codex()
     if not executable:
         raise ValueError('Packaged Codex CLI is required, including when called from Claude')
@@ -136,7 +152,7 @@ def main():
         task = args.task_file.read_text(encoding='utf-8-sig')
         result = select(task) if args.plan else execute(task, args.cwd, args.host)
         print(json.dumps(result, ensure_ascii=False))
-        return 0 if args.plan or result['status'] == 'completed' else 1
+        return 0 if args.plan or result['status'] in ('completed', 'dispatch_required') else 1
     except (ValueError, OSError) as exc:
         print(json.dumps({'status': 'blocked', 'error': str(exc)}))
         return 1

@@ -1,6 +1,6 @@
 {
   "name": "veera",
-  "version": "0.2.0",
+  "version": "0.2.2",
   "description": "Bounded Build/Fix delivery with native Codex bootstrap and Windows support.",
   "skills": "./adapters/codex/skills",
   "hooks": "./adapters/codex/hooks.json"

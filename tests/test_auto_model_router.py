@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -45,10 +46,33 @@ class AutoRouterTests(unittest.TestCase):
             {'type': 'item.completed', 'item': {'type': 'agent_message', 'text': 'done'}},
             {'type': 'turn.completed'}])
         with patch.object(r.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, output, '')):
-            result = r.execute('Summarize README', Path.cwd(), 'codex', executable='codex')
+            result = r.execute('Summarize README', Path.cwd(), 'claude', executable='codex')
         self.assertEqual(result['status'], 'completed')
         self.assertFalse(result['actual_model_verified'])
         self.assertEqual(result['response'], 'done')
+
+    def test_codex_routes_to_native_roles_without_a_nested_process(self):
+        with patch.object(r.subprocess, 'run', side_effect=AssertionError('No nested Codex')):
+            for task, role in [('Summarize README', 'veera_light'),
+                               ('Review security', 'veera_important')]:
+                result = r.execute(task, Path.cwd(), 'codex')
+                self.assertEqual(result['status'], 'dispatch_required')
+                self.assertEqual(result['dispatch']['agent_type'], role)
+                self.assertFalse(result['dispatch']['fork_context'])
+                self.assertFalse(result['actual_model_verified'])
+
+    def test_native_dispatch_retains_authorized_source_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result = r.execute('Summarize README', Path(directory), 'codex')
+            self.assertIn(json.dumps(str(Path(directory).resolve())), result['dispatch']['message'])
+
+    def test_roles_match_model_policy_and_inherit_permissions(self):
+        import tomllib
+        for tier in ('light', 'important'):
+            role = tomllib.loads((r.ROOT / f'adapters/codex/agents/veera_{tier}.toml').read_text())
+            self.assertEqual(role['model'], r.select('Summarize README' if tier == 'light' else 'Review security')['model'])
+            self.assertNotIn('sandbox_mode', role)
+            self.assertNotIn('approval_policy', role)
 
     def test_recursion_and_empty_rejected(self):
         with self.assertRaises(ValueError):
