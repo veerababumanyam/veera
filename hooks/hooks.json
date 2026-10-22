@@ -1,0 +1,6 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap.py\"", "timeout": 10, "onFailure": "continue"}]}],
+    "PreToolUse": [{"hooks": [{"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/safety.py\"", "timeout": 10, "onFailure": "continue"}]}]
+  }
+}

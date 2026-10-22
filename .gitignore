@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+artifacts/
+.veera/
+.veera-artifacts/
+.veera-sessions/
