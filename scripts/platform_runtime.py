@@ -7,6 +7,19 @@ import sys
 import time
 
 
+def make_state_directory(path, *, parents=False, exist_ok=False):
+    """Keep POSIX state private; inherit host-managed Windows access on creation.
+
+    Python 3.13+ turns mode 0700 into a protected Windows DACL, removing
+    inherited host/sandbox entries. The default Windows mkdir instead uses
+    the parent's ACL. Existing permissions and actual denials are untouched.
+    """
+    if os.name == 'nt':
+        path.mkdir(parents=parents, exist_ok=exist_ok)
+    else:
+        path.mkdir(mode=0o700, parents=parents, exist_ok=exist_ok)
+
+
 @contextlib.contextmanager
 def file_lock(path, blocking=True):
     with open(path, 'a+b') as stream:

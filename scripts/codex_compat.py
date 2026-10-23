@@ -17,6 +17,7 @@ def capabilities():
         'extra_approval_gate': False,
         'authority_recovery': {'amend': 'controller-validated', 'resume': 'controller-validated', 'blocker-human-resolve': 'controller-validated'},
         'arbitrary_shell': 'host-policy',
+        'canonical_bash_execution_cwd': 'not-exposed-by-host',
         'unknown_mutating_tools': 'host-policy',
         'native_approval_and_sandbox': 'unchanged',
         'live_host_verified': False,

@@ -64,7 +64,57 @@ def handle(payload, host='claude'):
         return {}
     action = invocation(payload.get('prompt'), host)
     if not action:
+        prompt = payload.get('prompt')
+        # The coordinator understands intent and conversation history. A verb
+        # whitelist here misses short requests, continuations and other languages.
+        if (host not in ('claude', 'codex') or not isinstance(prompt, str) or not prompt.strip()
+                or prompt.lstrip().startswith(('/', '$', '[', '>', '`', '"', "'", '<'))
+                or os.environ.get('VEERA_ROUTER_ACTIVE')):
+            return {}
+        action = 'auto'
+    return context(payload, host, action)
+
+
+def tool_context(payload, host):
+    """Recover context on a real skill read when no user-prompt event was sent.
+
+    Tool-created desktop chats can begin with delegated input. This uses the
+    actual PreToolUse identity; it neither simulates a prompt nor approves a tool.
+    Call only for an unbound session, after existing guard classification.
+    """
+    if (not isinstance(payload, dict) or payload.get('hook_event_name') != 'PreToolUse'
+            or host not in ('claude', 'codex') or os.environ.get('VEERA_ROUTER_ACTIVE')):
         return {}
+    args = payload.get('tool_input')
+    if not isinstance(args, dict):
+        return {}
+    tool = payload.get('tool_name')
+    if tool == 'Read':
+        value = args.get('file_path')
+    elif tool in ('Bash', 'exec_command', 'shell_command'):
+        value = args.get('cmd', args.get('command'))
+        if not isinstance(value, str) or not re.search(r'(?:^|[\s;])(?:Get-Content|cat|type)\s', value, re.I):
+            return {}
+    elif tool == 'Skill' and args.get('skill') in ('veera:build', 'veera:fix'):
+        return context(payload, host, 'auto')
+    else:
+        return {}
+    if not isinstance(value, str):
+        return {}
+    value = re.sub('/+', '/', value.replace('\\', '/')).casefold()
+    root = Path(__file__).resolve().parents[1]
+    skills = root / ('adapters/codex/skills' if host == 'codex' else 'skills')
+    for action in ('build', 'fix'):
+        target = (skills / action / 'SKILL.md').as_posix().casefold()
+        if (tool == 'Read' and value == target) or (tool != 'Read' and re.search(
+                r'(?:^|[\s\'\"])' + re.escape(target) + r'(?=$|[\s\'\"])', value)):
+            return context(payload, host, 'auto')
+    return {}
+
+
+def context(payload, host, action):
+    """Disclose only actual hook inputs. Context does not enroll or grant authority."""
+    event = payload['hook_event_name']
     try:
         session_id = payload.get('session_id')
         ownership.session_key(session_id)
@@ -73,21 +123,38 @@ def handle(payload, host='claude'):
         if not data:
             raise ValueError('Persistent data unavailable')
     except (ValueError, OSError):
-        return {'hookSpecificOutput': {'hookEventName': 'UserPromptSubmit', 'additionalContext': 'Veera bootstrap BLOCKED: actual session identity and host persistent plugin data are required. Do not invent them or enroll.'}}
+        message = ('Veera automatic identity is unavailable. Answer informational requests normally. '
+                   'Owned delivery requires actual host session identity and persistent plugin data; '
+                   'diagnose the host integration with ordinary permitted tools, without asking for a start command. '
+                   'Do not invent identity or enroll.') if action == 'auto' else (
+                   'Veera bootstrap BLOCKED: actual session identity and host persistent plugin data are required. Do not invent them or enroll.')
+        return {'hookSpecificOutput': {'hookEventName': event, 'additionalContext': message}}
     package = Path(__file__).resolve().parents[1]
     manifest = package / ('.codex-plugin/plugin.json' if host == 'codex' else '.claude-plugin/plugin.json')
     try:
         version = json.loads(manifest.read_text(encoding='utf-8')).get('version')
     except (OSError, ValueError, AttributeError):
         version = None
-    context = {'veera_bootstrap': {'session_id': session_id, 'host': host, 'plugin_data': data, 'package_root': str(package), 'package_version': version, 'python_executable': sys.executable, 'cwd': payload.get('cwd'), 'enrolled': False, 'requested_action': action}}
+    context = {'veera_bootstrap': {'session_id': session_id, 'host': host, 'plugin_data': data, 'package_root': str(package), 'package_version': version, 'python_executable': sys.executable, 'cwd': payload.get('cwd'), 'enrolled': False, 'requested_action': action,
+                                  'activation': 'automatic' if action == 'auto' else 'explicit', 'identity_event': event,
+                                  'routing_guide': str(package / 'docs/automatic-entry.md')}}
     if host == 'codex':
         from codex_compat import capabilities
         context['veera_capabilities'] = capabilities()
         policy_path = Path(__file__).resolve().parents[1] / 'docs/model-policy.json'
         context['veera_model_policy'] = json.loads(policy_path.read_text(encoding='utf-8'))
         context['veera_model_policy']['applied_to_current_model'] = False
-    return {'hookSpecificOutput': {'hookEventName': 'UserPromptSubmit', 'additionalContext': 'Actual host identity for this direct Veera invocation. Build/Fix may continue the authorized task in this same turn without a separate start message. Start is an optional identity diagnostic. Preserve native permissions; identity disclosure is not enrollment or publication approval. Pass CLAUDE_PLUGIN_DATA and VEERA_HOST explicitly to controller commands if the shell does not inherit them.\n' + json.dumps(context)}}
+    guidance = ('Veera is ready for automatic task routing. For an actionable software task, the user-facing coordinator '
+                'reads routing_guide below and uses the matching Build/Fix skill now; no command or activation question. '
+                'Use conversation context, not a keyword test. Questions, quoted requests, explicit opt-outs and '
+                'findings-only delegates must not enroll or start delivery. Continue an existing owned task instead of '
+                'starting another. Default new work to local-verify unless publication was requested. '
+                'Veera maintenance uses ordinary host tools, not its own delivery workflow. ') if action == 'auto' else (
+                'Actual host identity for this Veera invocation. Continue the authorized task in this turn; '
+                'no separate start message. Start is an optional identity diagnostic. ')
+    return {'hookSpecificOutput': {'hookEventName': event, 'additionalContext': guidance +
+            'Identity disclosure is not enrollment, permission or publication approval. Preserve native permissions. '
+            'Pass the returned plugin_data as CLAUDE_PLUGIN_DATA and host as VEERA_HOST to controller children.\n' + json.dumps(context)}}
 
 
 def main():

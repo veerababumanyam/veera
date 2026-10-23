@@ -5,7 +5,7 @@ description: Optional Veera identity diagnostic; Build/Fix captures current chat
 
 # Veera — optional start diagnostic
 
-Build/Fix setup is automatic. Invoke `$veera:build <task>` or `$veera:fix <task>` directly; do not require a separate start message. The trusted UserPromptSubmit hook captures the actual current chat identity without enrollment or project access. Read `docs/task-lifecycle.md` under the actual package root for lifecycle details.
+Build/Fix starts automatically from ordinary software task requests; explicit commands are optional. Do not require a start message or ask the user to rephrase with a command. The trusted UserPromptSubmit hook captures the actual current chat identity without enrollment or project access. Read `docs/task-lifecycle.md` under the actual package root for lifecycle details.
 
 Use `$veera:start` only when the user explicitly wants an identity/setup diagnostic. The plain command and a leading desktop skill link are supported, including surrounding whitespace. Report the real hook result and its `package_version`. Start alone does not begin a task, grant publication authority, or enroll a session. Do not invent IDs, inspect other sessions, alter native permissions or manufacture a bootstrap result. Retain actual identity/data-directory values only in the coordinator's context.
 

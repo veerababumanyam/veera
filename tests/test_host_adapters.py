@@ -29,8 +29,8 @@ class HostAdapterTests(unittest.TestCase):
         d.atomic(d.storage(self.root) / 'workspace.json', {'id': 'workspace1', 'session_id': 'owner'})
         return ownership.enroll('owner', self.root, 'workspace1')
 
-    def test_explicit_bootstrap_only_no_writes(self):
-        for prompt in ('hello', ' /veera:start', '/veera:start extra', 'please /veera:start', '"/veera:start"'):
+    def test_invalid_explicit_commands_do_not_bootstrap(self):
+        for prompt in (' /veera:start', '/veera:start extra', '"/veera:start"'):
             self.assertEqual(bootstrap.handle({'hook_event_name': 'UserPromptSubmit', 'session_id': 'owner', 'prompt': prompt}), {})
         result = bootstrap.handle({'hook_event_name': 'UserPromptSubmit', 'session_id': 'owner', 'prompt': '/veera:start'})
         self.assertIn('"session_id": "owner"', result['hookSpecificOutput']['additionalContext'])
@@ -60,7 +60,7 @@ class HostAdapterTests(unittest.TestCase):
 
     def test_mentions_wrong_host_and_similar_commands_do_not_activate(self):
         for host in ('claude', 'codex'):
-            for prompt in ('Explain /veera:fix', '`$veera:build`', '/veera:fixer thing', '$veera:build-more',
+            for prompt in ('`$veera:build`', '/veera:fixer thing', '$veera:build-more',
                            '/veera:route list files', '$veera:diagnose', '', None, ['/veera:fix']):
                 self.assertEqual(bootstrap.handle({'hook_event_name': 'UserPromptSubmit', 'session_id': 'owner', 'prompt': prompt}, host), {})
         for host, prompt in [('claude', '$veera:fix issue'), ('codex', '/veera:fix issue')]:

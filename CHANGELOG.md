@@ -1,3 +1,19 @@
+## 0.3.2 — 2026-10-23
+
+- Fix the live Codex worktree startup failure: canonical Bash events report chat cwd and omit execution workdir. Stop treating that field as proof of execution location; preserve actual owner/state validation, known file-target scope checks and native permissions. Check effective workdir when the host supplies the original execution arguments.
+- Allow absolute, scoped file operations from projectless chats while retaining foreign/nested/protected target denials. Keep Claude's cwd checks unchanged. Reconcile shared automatic-start guidance with the installed Build/Fix entry behavior.
+
+## 0.3.1 — 2026-10-23
+
+- Preserve inherited host access when creating Windows session, task-state and archive directories. Python 3.13+ interprets Unix-style `0700` as a protected Windows DACL; Veera now leaves Windows directory access to the parent ACL while retaining private POSIX modes.
+- Cover enrollment, migration, archives, unchanged existing permissions and propagated host denials with regression tests. Existing inaccessible directories still require host-authorized access restoration; the update does not rewrite ACLs, relocate registries or adopt blocked tasks.
+
+## 0.3.0 — 2026-10-23
+
+- Start Build/Fix automatically from ordinary task requests in Codex and Claude Code; explicit commands remain optional. Follow-ups reuse the current task, and questions or opt-outs do not enroll one.
+- Enable Claude's automatic Build/Fix selection. New automatically routed work defaults to local verification unless publication was requested.
+- Recover actual identity through the existing PreToolUse hook when a tool-created desktop chat reads the installed Build/Fix skill without a prior user-prompt event. Preserve existing hook definitions, trust and guard decisions.
+
 ## 0.2.7 — 2026-10-23
 
 - Recognize Codex desktop skill links and surrounding whitespace, including stale Veera cache links, while retaining host-provided identity and using the running package version.

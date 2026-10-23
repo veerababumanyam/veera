@@ -8,17 +8,17 @@ A standalone Claude Code and Codex plugin for bounded **Build** and **Fix** deli
 claude plugin install veera --marketplace veerababumanyam/veera --scope user
 ```
 
-Invoke `/veera:build <task>` or `/veera:fix <task>` directly. Identity setup happens in that request; no separate start step is required. Successful completion automatically releases the chat's task binding while preserving its worktree and records. See [automatic task lifecycle](docs/task-lifecycle.md). User scope makes the plugin available across your projects; only explicitly bound sessions activate task controls. Codex adapter files are included but are not automatically installed or trusted by this command. See the current verification report before relying on unattended delivery.
+Describe a software task normally, for example “Add CSV export” or “Fix the login crash.” Veera selects Build/Fix automatically in both hosts; explicit commands and a separate start step are unnecessary. New automatic work is verified locally unless you requested publication. Successful completion automatically releases the chat's task binding while preserving its worktree and records. See [automatic task lifecycle](docs/task-lifecycle.md). User scope makes the plugin available across your projects; only explicitly bound sessions activate task controls. Codex adapter files are included but are not automatically installed or trusted by this command. See the current verification report before relying on unattended delivery.
 
 ## Host integration
 
-- Claude: direct Build/Fix automatically receives actual host identity through UserPromptSubmit. Start is an optional diagnostic; it is no longer a prerequisite. Identity disclosure does not enroll, create a worktree or authorize publication.
+- Claude: ordinary task requests automatically receive actual host identity through UserPromptSubmit and select Build/Fix. Start is an optional diagnostic; it is no longer a prerequisite. Identity disclosure does not enroll, create a worktree or authorize publication.
 - Routing now uses host-provided `CLAUDE_PLUGIN_DATA/veera-v1/claude/sessions`, not the replaceable plugin directory. CLI children must receive the same actual data-directory environment if not inherited. Missing data fails before workspace creation; no silent production fallback.
 - Upgrade migration is explicit and limited to one quiescent owner: `python3 scripts/ownership.py --session-id ID --root TASK --legacy-file EXACT_FILE` with the configured persistent environment. It validates owner/task identity, creates exclusively, rejects conflicts and preserves the source. Never bulk migrate or keep both old/new writers active.
 - Hook error policy: unknown/unbound input returns no-op without project access; failures after exact owner-record classification deny. Host-level process startup failure/timeout uses `onFailure: continue` to avoid breaking unrelated sessions. Native host permissions/sandbox remain essential: this cannot guarantee fail-closed ownership if the interpreter never starts.
-- Codex: a separate adapter lives in `adapters/codex`, with direct `$veera:build`/`$veera:fix`, optional `$veera:start`, portable skills and trusted hooks. It uses `VEERA_HOST=codex` and a separate persistent namespace. Codex uses host permissions without a Veera approval prompt; known patches retain scope checks and other tools retain ownership/state checks. No trust/sandbox bypass flags or global configuration changes are used.
+- Codex: a separate adapter lives in `adapters/codex`, with automatic Build/Fix routing for ordinary requests, optional explicit commands, portable skills and trusted hooks. It uses `VEERA_HOST=codex` and a separate persistent namespace. Codex uses host permissions without a Veera approval prompt; known patches retain scope checks and other tools retain ownership/state checks. No trust/sandbox bypass flags or global configuration changes are used.
 
-**Historical pilot evidence:** the 0.1.5 pilot encountered Claude bootstrap/read-permission and Codex authentication failures, recorded in [0.1.5 verification](docs/verification-v0.1.5.md). Those historical results are not a current activation check. See [current verification](docs/verification-v0.2.7.md) for installed-package and runtime results, with the remaining model-driven delivery limitations stated explicitly.
+**Historical pilot evidence:** the 0.1.5 pilot encountered Claude bootstrap/read-permission and Codex authentication failures, recorded in [0.1.5 verification](docs/verification-v0.1.5.md). Those historical results are not a current activation check. See [current verification](docs/verification-v0.3.2.md) for a successful fresh Codex delivery, installed-package checks and the remaining Claude account-capacity limitation.
 
 ## Session and project isolation (0.1.4 onward)
 
@@ -56,7 +56,7 @@ Linux/macOS with Python 3.10+, or native Windows with Python 3.12+, Git and a su
 claude --plugin-dir /home/veera/veera --effort medium
 ```
 
-Then use `/veera:build <feature>` or `/veera:fix <problem>`. Loading is session-local; no global installation is performed. Use the absolute path wherever you place this plugin. For Codex, follow `docs/model-routing.md`: Sol for light work and Astra for important work, through supported native model controls. Claude retains its selected native model. The plugin does not bypass permissions or change global model defaults.
+Then describe the feature or problem normally. Explicit `/veera:build` and `/veera:fix` remain optional. Loading is session-local; no global installation is performed. Use the absolute path wherever you place this plugin. For Codex, follow `docs/model-routing.md`: Sol for light work and Astra for important work, through supported native model controls. Claude retains its selected native model. The plugin does not bypass permissions or change global model defaults.
 
 ## Central task memory and managed blockers (0.1.2)
 
@@ -199,7 +199,7 @@ claude plugin validate /home/veera/veera --strict
 python3 /home/veera/veera/tests/browser_smoke.py
 ```
 
-Runtime tests use disposable Git repositories and local subprocesses, not production applications. Browser smoke testing uses installed Chrome headless, including a screenshot; it is not a full accessibility audit. See [current verification](docs/verification-v0.2.7.md) and [runtime performance](docs/performance.md) for results and remaining gaps; earlier verification documents preserve previous version records. No real-application autonomous delivery, PM/Architect/Advisor behavioral comparison, universal security guarantee or industry-leading performance claim is implied by runtime unit tests.
+Runtime tests use disposable Git repositories and local subprocesses, not production applications. Browser smoke testing uses installed Chrome headless, including a screenshot; it is not a full accessibility audit. See [current verification](docs/verification-v0.3.0.md) and [runtime performance](docs/performance.md) for results and remaining gaps; earlier verification documents preserve previous version records. No real-application autonomous delivery, PM/Architect/Advisor behavioral comparison, universal security guarantee or industry-leading performance claim is implied by runtime unit tests.
 
 ## Local v0.1.6 installation repair
 

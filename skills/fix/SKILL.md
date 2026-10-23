@@ -1,16 +1,15 @@
 ---
 name: fix
-disable-model-invocation: true
-description: Diagnose and remediate one authorized defect through task-worktree regression checks, independent review and authorized release. Not a whole-app audit.
+description: Diagnose and repair requested software defects automatically from ordinary task messages, using owned work, focused verification and review. No special command is required; informational questions do not start delivery.
 ---
 
 # Veera — Fix
 
-Guidance 0.2.7. Invoke `/veera:fix <task>` directly. The trusted UserPromptSubmit hook supplies this chat's actual identity in the same request; no preceding start message is required. Continue the authorized task in this turn. Identity setup does not itself enroll, expand scope or authorize publication.
+Guidance 0.3.0. Start automatically for an ordinary user request matching this skill. Read `docs/automatic-entry.md` under the installed package root and use the actual host bootstrap context. Explicit `/veera:fix <task>` remains optional. Continue in the same turn without asking the user for an activation command, separate start message or routine confirmation. Automatic entry does not enroll, expand scope or authorize publication. For a new automatically routed task, freeze `delivery_mode: "local-verify"` unless the user requested publication; preserve the mode of an existing task.
 
 ## Shared rules
 
-For an explicitly nonpublishing task, freeze `delivery_mode: "local-verify"` and omit `release` before init. In that mode the release/version requirements below do not apply: prohibit release-prepare/reconcile/publish, retain every scope/behavior/count/fingerprint/review/blocker/ownership gate, and finish to terminal `verified-local`. Report "verified locally; unpublished", preserve the worktree/evidence; successful CLI finish releases the binding automatically. Never claim published complete/DONE or automatically archive the task. Publishing remains the default; never switch an initialized task to local mode.
+For an explicitly nonpublishing task, freeze `delivery_mode: "local-verify"` and omit `release` before init. In that mode the release/version requirements below do not apply: prohibit release-prepare/reconcile/publish, retain every scope/behavior/count/fingerprint/review/blocker/ownership gate, and finish to terminal `verified-local`. Report "verified locally; unpublished", preserve the worktree/evidence; successful CLI finish releases the binding automatically. Never claim published complete/DONE or automatically archive the task. Select publishing only when the user requested it; never change an initialized task to another mode.
 
 Read `${CLAUDE_PLUGIN_ROOT}/docs/agent-contract.md` sections Authority and ownership, Session isolation, Bounded contract, Runtime interface, and Evidence and immutable DONE. Read UI acceptance for UI defects, and Selective reasoning, context and repair before delegation or repair. Native/project instructions, permissions and stricter recovery ceilings remain binding.
 

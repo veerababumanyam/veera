@@ -7,11 +7,13 @@ The native `.codex-plugin/plugin.json` selects these skills and hooks. Codex own
 | Operation | Behavior |
 | --- | --- |
 | Package diagnosis | `scripts/codex_compat.py` reads package files without bootstrap, enrollment, ownership access or writes. |
+| Ordinary task request | Trusted hook supplies actual identity; the coordinator selects Build/Fix automatically. Questions and opt-outs do not start delivery. New work defaults to local verification unless publication was requested. |
+| Tool-created chat without a prompt event | An unbound session's actual PreToolUse event can provide identity when the installed Build/Fix skill is read. Adds context only, never permission. |
 | Direct `$veera:build <task>` / `$veera:fix <task>` | Trusted hook supplies actual identity and capabilities in the same turn; no separate start message. Hyphen aliases and leading desktop skill links are also supported. |
 | `$veera:start` | Optional identity diagnostic; no enrollment or task execution. |
 | Controller operations | Existing task ownership, frozen scope, time, evidence and state validation apply. |
 | `amend`, `resume`, `blocker-human-resolve` | Reuse recorded upfront user authorization when it covers the action; the controller validates the request without an additional Codex hook approval prompt. |
-| Shell and other native tools | Existing Codex permission policy applies. Unfamiliar names are not rejected merely because the adapter cannot classify them. Owned cwd and terminal-state checks still apply. |
+| Shell and other native tools | Existing Codex permission policy applies. Exact ownership and terminal-state checks remain. Canonical Bash events omit workdir, so chat cwd cannot prove execution location. Original exec_command/shell_command inputs, when exposed, retain workdir validation. |
 | Direct `apply_patch` | Validate the supported envelope and all target paths against ownership, scope and protected settings. Malformed or forbidden patches remain denied. |
 | Actual host denial | Binding. Neither an intake record nor a specialist can override the host. |
 
@@ -28,12 +30,12 @@ Task/permission boundaries, genuine missing credentials and host denials are dis
 ## Bootstrap and ownership
 
 - Inspect actual hook status first; use native review only for untrusted/modified definitions. Installation alone does not prove hook loading. Hook trust and per-action approval are different mechanisms.
-- Require the actual `session_id` field from trusted `UserPromptSubmit` output; do not invent identity or discover another session's record.
+- Require the actual `session_id` field from trusted `UserPromptSubmit` or supported skill-read `PreToolUse` output; do not invent identity or discover another session's record.
 - Codex supplies `PLUGIN_ROOT`/`PLUGIN_DATA` and compatible `CLAUDE_PLUGIN_ROOT`/`CLAUDE_PLUGIN_DATA` aliases to plugin hooks. Use the returned absolute `package_root`, `plugin_data`, `python_executable` and cwd.
 - The hook child sets `VEERA_HOST=codex`. Controller children must receive that host and the actual returned `CLAUDE_PLUGIN_DATA` explicitly if not inherited. Do not change global environment settings.
 - Invoke the actual `python_executable`, quoting paths on Windows. The controller guard recognizes that interpreter and the documented `python3` alias.
 - Persistent ownership uses only the exact `${CLAUDE_PLUGIN_DATA}/veera-v1/codex/sessions/<sha256 session_id>.json` record, never enumeration or legacy adoption. Claude retains its separate namespace.
-- Build/Fix captures identity automatically for that direct task request, then creates an owned workspace through the controller. Start is optional. Successful CLI completion releases the binding automatically; neither startup nor cleanup confers publication authority. See [task lifecycle](../../docs/task-lifecycle.md).
+- Build/Fix starts from ordinary task requests, captures actual identity and creates an owned workspace through the controller. Explicit commands and Start are optional. Successful CLI completion releases the binding automatically; neither startup nor cleanup confers publication authority. See [task lifecycle](../../docs/task-lifecycle.md).
 - `workspace` requires the actual session argument. Subsequent root commands require that argument plus the returned owner capability. Only the coordinator uses it; never share it with specialists.
 
 Missing bootstrap blocks the owned delivery controller, not independent host-authorized diagnosis of the package. A broken Veera installation should be repaired through ordinary host tools rather than requiring the broken workflow to repair itself. This does not authorize changing live owner records.

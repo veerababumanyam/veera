@@ -43,7 +43,7 @@ READ_ONLY = {'Read', 'Glob', 'Grep', 'ToolSearch', 'ListAgents'}
 DANGEROUS = re.compile(r'(?:\bgit\s+(?:push|reset\s+--hard|clean\s+-)|\brm\s+[^\n]*-[a-zA-Z]*[rf]|\bsudo\b|\bcurl\b.*\|\s*(?:ba)?sh|\b(?:npm|pnpm)\s+publish\b|\bkubectl\b|\bterraform\s+(?:apply|destroy)\b|\bchmod\s+777\b|\bDROP\s+(?:TABLE|DATABASE)\b)', re.I)
 
 
-def evaluate(payload):
+def evaluate(payload, *, cwd_is_execution_context=True):
     session_id = payload.get('session_id')
     if not session_id:
         return None  # No identity means no adoption or project discovery.
@@ -55,14 +55,15 @@ def evaluate(payload):
         return None  # Critically: no cwd, ancestor, Git or run-state access.
     root = Path(binding['root'])
     cwd = Path(payload.get('cwd', '.')).resolve()
-    if not cwd.is_relative_to(root):
-        return 'This Veera session is bound to its task worktree; do not operate in another project.'
-    # Nested repositories are separate projects even inside the owned path.
-    for directory in [cwd, *cwd.parents]:
-        if directory == root:
-            break
-        if (directory / '.git').exists():
-            return 'Nested repository is not the owned Veera task.'
+    if cwd_is_execution_context:
+        if not cwd.is_relative_to(root):
+            return 'This Veera session is bound to its task worktree; do not operate in another project.'
+        # Nested repositories are separate projects even inside the owned path.
+        for directory in [cwd, *cwd.parents]:
+            if directory == root:
+                break
+            if (directory / '.git').exists():
+                return 'Nested repository is not the owned Veera task.'
     try:
         capability = ownership.registry() / (ownership.session_key(session_id) + '.json')
         ownership.authorize(session_id, root, capability)
@@ -192,7 +193,7 @@ def evaluate(payload):
     return None
 
 
-def handle(payload):
+def handle(payload, *, cwd_is_execution_context=True):
     # Classify only the exact host record before accessing any project state.
     try:
         if not isinstance(payload, dict):
@@ -203,9 +204,10 @@ def handle(payload):
     except (ValueError, OSError):
         return {}  # Unknown ownership cannot justify interfering with another session.
     if not present:
-        return {}
+        from bootstrap import tool_context
+        return tool_context(payload, os.environ.get('VEERA_HOST', 'claude'))
     try:
-        reason = evaluate(payload)
+        reason = evaluate(payload, cwd_is_execution_context=cwd_is_execution_context)
     except Exception:
         reason = 'Owned Veera hook failed validation; controlled action denied.'
     if not reason:

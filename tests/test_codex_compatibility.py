@@ -39,6 +39,56 @@ class CodexCompatibilityTests(unittest.TestCase):
             importlib.reload(codex_hook)
             self.assertEqual(os.environ['VEERA_HOST'], 'claude')
 
+    def detached_request(self, tool, args):
+        return codex_hook.handle({'hook_event_name': 'PreToolUse', 'session_id': 'fixture-owner',
+                                  'cwd': str(self.base / 'chat'), 'tool_name': tool, 'tool_input': args})
+
+    def test_canonical_bash_session_cwd_is_not_execution_cwd(self):
+        # Native Codex drops exec_command.workdir from the canonical Bash event.
+        # Do not misrepresent session cwd as an execution boundary or parse cd.
+        self.assertEqual(self.detached_request('Bash', {'command': 'git status --short'}), {})
+        self.assertEqual(self.detached_request('spawn_agent', {'message': 'Read-only review of the task'}), {})
+        with patch.object(safety, 'status', return_value={'status': 'blocked'}):
+            for tool, args in [('Bash', {'command': 'git status'}), ('spawn_agent', {'message': 'review'})]:
+                self.assertEqual(self.detached_request(tool, args)['hookSpecificOutput']['permissionDecision'], 'deny')
+
+    def test_explicit_execution_workdir_is_checked_when_exposed(self):
+        for tool, command_key in [('exec_command', 'cmd'), ('shell_command', 'command')]:
+            with self.subTest(tool=tool):
+                self.assertEqual(self.detached_request(tool, {command_key: 'git status', 'workdir': str(self.root)}), {})
+                for directory in (str(self.base), str(self.base / 'foreign'), 17, ''):
+                    result = self.detached_request(tool, {command_key: 'git status', 'workdir': directory})
+                    self.assertEqual(result['hookSpecificOutput']['permissionDecision'], 'deny')
+                self.assertEqual(self.detached_request(tool, {command_key: 'git status'})['hookSpecificOutput']['permissionDecision'], 'deny')
+        nested = self.root / 'nested'
+        (nested / '.git').mkdir(parents=True)
+        result = self.detached_request('exec_command', {'cmd': 'git status', 'workdir': str(nested)})
+        self.assertEqual(result['hookSpecificOutput']['permissionDecision'], 'deny')
+
+    def test_detached_chat_absolute_patch_targets_keep_scope(self):
+        for target, permitted in [(self.root / 'app.py', True), (self.root / 'outside.py', False),
+                                  (self.root / '.codex/config.toml', False), (self.base / 'foreign.py', False),
+                                  (Path('app.py'), False)]:
+            patch_text = f'*** Begin Patch\n*** Add File: {target.as_posix()}\n+x\n*** End Patch'
+            result = self.detached_request('apply_patch', {'command': patch_text})
+            with self.subTest(target=str(target)):
+                self.assertEqual(result == {}, permitted)
+        nested = self.root / 'nested'
+        (nested / '.git').mkdir(parents=True)
+        result = self.detached_request('apply_patch', {'command': f'*** Begin Patch\n*** Add File: {(nested / "app.py").as_posix()}\n+x\n*** End Patch'})
+        self.assertEqual(result['hookSpecificOutput']['permissionDecision'], 'deny')
+
+    def test_detached_chat_reads_still_check_exact_targets(self):
+        for target, permitted in [(self.root / 'app.py', True), (ROOT / 'docs/agent-contract.md', True),
+                                  (self.base / 'foreign.py', False), (Path('app.py'), False)]:
+            with self.subTest(target=str(target)):
+                self.assertEqual(self.detached_request('Read', {'file_path': str(target)}) == {}, permitted)
+
+    def test_detached_chat_does_not_skip_owner_validation(self):
+        (self.root / '.veera/workspace.json').write_text(json.dumps({'id': 'other', 'session_id': 'fixture-owner'}))
+        for tool, args in [('Bash', {'command': 'git status'}), ('spawn_agent', {'message': 'review'})]:
+            self.assertEqual(self.detached_request(tool, args)['hookSpecificOutput']['permissionDecision'], 'deny')
+
     def test_codex_configuration_is_protected_even_if_in_scope(self):
         for path in ('.codex/config.toml', '.CODEX/config.toml', '.GIT/config'):
             with self.subTest(path=path):

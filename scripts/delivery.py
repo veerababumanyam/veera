@@ -2,7 +2,7 @@
 """Local, dependency-free delivery state machine. Not a sandbox."""
 import argparse
 import contextlib
-from platform_runtime import file_lock, launch
+from platform_runtime import file_lock, launch, make_state_directory
 import hashlib
 import json
 import math
@@ -43,7 +43,7 @@ def storage(root):
     root = Path(root).resolve()
     directory = root / STATE
     require(not directory.is_symlink(), 'State directory must not be a symlink')
-    directory.mkdir(mode=0o700, exist_ok=True)
+    make_state_directory(directory, exist_ok=True)
     for item in directory.iterdir():
         require(not item.is_symlink(), 'State artifacts must not be symlinks')
     return directory
@@ -466,9 +466,9 @@ def archive(root):
         require(not state.get('running'), 'A check is still running')
         history = directory / 'history'
         require(not history.is_symlink(), 'Archive directory must not be a symlink')
-        history.mkdir(mode=0o700, exist_ok=True)
+        make_state_directory(history, exist_ok=True)
         target = history / str(time.time_ns())
-        target.mkdir(mode=0o700)
+        make_state_directory(target)
         for path in directory.iterdir():
             if path.is_file() and path.name != 'lock':
                 os.replace(path, target / path.name)

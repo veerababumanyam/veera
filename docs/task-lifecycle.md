@@ -4,12 +4,12 @@ Veera is installed once for the user. Each explicitly requested task gets its ow
 
 ## Begin with the task
 
-- Claude Code: `/veera:build <task>` or `/veera:fix <task>`.
-- Codex: `$veera:build <task>` or `$veera:fix <task>`; hyphen aliases and leading desktop skill links also work.
+- In Claude Code or Codex, describe the task normally: “Add CSV export” or “The total is wrong for refunds; fix it.” No activation command is required.
+- Explicit `/veera:build` / `/veera:fix` on Claude and `$veera:build` / `$veera:fix` on Codex remain optional shortcuts.
 
-The existing trusted UserPromptSubmit hook recognizes these direct commands, including their task arguments, and supplies the actual host session identity, cwd, interpreter and package/data paths in the same turn. It does not enroll, read task records, create a worktree or execute implementation. The coordinator proceeds with the authorized task, upfront intake, owned workspace and contract. It must not ask for another start message.
+The existing trusted UserPromptSubmit hook supplies actual host session identity, cwd, interpreter and package/data paths for ordinary messages as well as direct commands. It does not enroll, read task records, create a worktree or execute implementation. The coordinator interprets the user's intent and conversation, then proceeds with the matching Build/Fix skill, upfront intake, owned workspace and contract. New automatic work defaults to local verification unless publication was requested. It must not ask for an activation command. See [automatic entry](automatic-entry.md).
 
-Ordinary prompts, quoted mentions, command lookalikes and the other host's syntax do not trigger bootstrap. This avoids adding Veera context to every unrelated message. `veera:start` remains an optional identity diagnostic. For missing context, follow [startup troubleshooting](startup-troubleshooting.md) instead of repeatedly asking for start or assuming hooks need trust. Reading a skill alone is not host identity evidence; missing or untrusted hooks remain an integration issue to fix, not a reason to manufacture an ID.
+Questions and quoted examples do not start delivery, even when lightweight routing context is present. Empty input, fenced/quoted blocks and unsupported explicit commands do not trigger automatic context. `veera:start` remains an optional identity diagnostic. Follow-ups reuse an existing task; they do not reset its budget or scope. For missing context, follow [startup troubleshooting](startup-troubleshooting.md) instead of asking for a command or assuming hooks need trust. Reading a skill is not itself identity evidence; only actual hook output is.
 
 Before implementation, [requirements analysis](requirements-analysis.md) researches the relevant code/domain, resolves essential questions with options and recommendations, and freezes the requirements and plan. Execution then uses the captured internal decision limits.
 

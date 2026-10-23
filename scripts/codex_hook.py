@@ -2,6 +2,7 @@
 """Codex task guard; execution permissions belong to the host, not an ASK shim."""
 import json
 import os
+from pathlib import Path
 import sys
 
 import bootstrap
@@ -31,15 +32,27 @@ def handle(payload):
         key = ownership.session_key(payload.get('session_id'))
         path = ownership.registry() / (key + '.json')
         if not path.exists() and not path.is_symlink():
-            return {}
+            return bootstrap.tool_context(payload, 'codex')
     except (ValueError, OSError):
         return {}
     if not isinstance(payload.get('tool_input'), dict):
         return {'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'permissionDecision': 'deny', 'permissionDecisionReason': 'Owned Codex tool input must be a valid object'}}
     tool = payload.get('tool_name')
     normalized = dict(payload)
+    # Native canonical Bash drops workdir and reports the chat's cwd. It is not
+    # evidence of command location. File targets remain relative to chat cwd;
+    # opaque tool effects stay governed by native policy, not a claimed sandbox.
+    cwd_is_execution_context = False
     if tool in ('exec_command', 'shell_command'):
         raw = payload.get('tool_input', {})
+        workdir = raw.get('workdir')
+        try:
+            if workdir is not None and (not isinstance(workdir, str) or not workdir.strip() or '\0' in workdir):
+                raise ValueError('Invalid execution workdir')
+            normalized['cwd'] = str((Path(payload.get('cwd', '.')) / (workdir or '.')).resolve())
+        except (ValueError, TypeError, OSError, RuntimeError):
+            return {'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'permissionDecision': 'deny', 'permissionDecisionReason': 'Invalid execution workdir'}}
+        cwd_is_execution_context = True
         normalized['tool_name'] = 'Bash'
         normalized['tool_input'] = {'command': raw.get('cmd', raw.get('command', ''))}
     elif tool == 'apply_patch':
@@ -54,13 +67,13 @@ def handle(payload):
         if not targets:
             return {'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'permissionDecision': 'deny', 'permissionDecisionReason': 'Patch contains no verified file targets'}}
         for target in targets:
-            result = safety.handle({**payload, 'tool_name': 'Write', 'tool_input': {'file_path': target}})
+            result = safety.handle({**payload, 'tool_name': 'Write', 'tool_input': {'file_path': target}}, cwd_is_execution_context=False)
             if result:
                 return native_decision(result)
         return {}
-    # Other tools retain owner/cwd/terminal checks. Their execution permissions
-    # remain with Codex; an unfamiliar name alone is not a reason to block work.
-    return native_decision(safety.handle(normalized))
+    # Exact ownership, state and known file-target checks apply even when the
+    # host cannot expose an effective tool cwd. No owner identity is substituted.
+    return native_decision(safety.handle(normalized, cwd_is_execution_context=cwd_is_execution_context))
 
 
 def main():

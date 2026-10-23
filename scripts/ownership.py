@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+from platform_runtime import make_state_directory
 import re
 import secrets
 
@@ -44,7 +45,7 @@ def enroll(session_id, root, workspace_id):
     key = session_key(session_id)
     if lookup(session_id) is not None:
         raise ValueError('Session is already bound; do not adopt or overwrite another task')
-    registry().mkdir(mode=0o700, parents=True, exist_ok=True)
+    make_state_directory(registry(), parents=True, exist_ok=True)
     path = registry() / (key + '.json')
     record = {'session_id': session_id, 'root': str(Path(root).resolve()), 'workspace_id': workspace_id, 'capability': secrets.token_urlsafe(32)}
     # Exclusive creation prevents concurrent enrollment replacing an owner.
@@ -93,7 +94,7 @@ def migrate(session_id, root, legacy_file):
         if existing != record:
             raise ValueError('Conflicting persistent owner record')
         return {'status': 'already-migrated', 'capability_file': str(registry() / (key + '.json'))}
-    registry().mkdir(mode=0o700, parents=True, exist_ok=True)
+    make_state_directory(registry(), parents=True, exist_ok=True)
     target = registry() / (key + '.json')
     fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(fd, 'w') as stream:
