@@ -11,6 +11,20 @@
     "reasoning_effort": "high",
     "tasks": ["architecture decisions", "security and permissions", "data migrations", "ambiguous root-cause analysis", "concurrency and ownership", "production-impacting changes", "final release review"]
   },
+  "dsh": {
+    "provider": "deepseek-account",
+    "light": {
+      "model": "deepseek-flash",
+      "reasoning_effort": "high",
+      "tasks": ["file discovery", "summaries", "documentation", "formatting", "small local edits", "running established checks", "memory updates"]
+    },
+    "important": {
+      "model": "deepseek-v4-pro",
+      "reasoning_effort": "high",
+      "tasks": ["architecture decisions", "security and permissions", "data migrations", "ambiguous root-cause analysis", "concurrency and ownership", "production-impacting changes", "final release review"]
+    },
+    "execution": "Dispatch a native subagent with the selected provider/model/reasoning-effort. DeepSeek Harness exposes these fields on the subagent tool when the host subagent model selection setting is enabled; otherwise report the required selection instead of claiming to switch the coordinator."
+  },
   "selection": "Classify each bounded work item by consequence and uncertainty, not prompt length. Important overrides light when both apply. Return to Sol when the important decision is resolved.",
   "execution": "Use the exposed native model/reasoning controls for an authorized delegation. If the host only lets the user change the coordinator model, report the required model selection instead of claiming to switch it. Preserve the current owner session, sandbox, task authority and budgets.",
   "unavailable": "Do not silently substitute Sol for required Astra work. Report model unavailability and continue only independent light work. Never bypass permissions, add a gateway, or launch another owner session.",

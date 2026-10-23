@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
-"""Automatic Sol/Astra selection for bounded, findings-only Codex delegates.
+"""Automatic Sol/Astra selection for Codex delegates and DeepSeek pro/flash for DSH.
 
-Claude uses this same Codex bridge, never OpenAI IDs in Claude frontmatter.
+Claude uses the Codex bridge, never OpenAI IDs in Claude frontmatter. DeepSeek
+Harness routes to deepseek-v4-pro (important) or deepseek-flash (light), both at
+high reasoning effort, and dispatches a native subagent with the selected route
+when the host subagent model selection setting is enabled.
 No owner adoption, capability transfer, permission bypass or model fallback.
 """
 import argparse
@@ -24,20 +27,24 @@ ROUTINE = re.compile(r'\s*(?:(?:summari[sz]e|explain) (?:README|[\w./\\-]+\.(?:m
                      r'run established checks)\s*', re.I)
 
 
-def select(task):
+def select(task, host='codex'):
     if not isinstance(task, str) or not task.strip():
         raise ValueError('A nonempty bounded task is required')
     policy = json.loads((ROOT / 'docs/model-policy.json').read_text(encoding='utf-8'))
+    table = policy['dsh'] if host == 'dsh' else policy
     risk = RISK.search(task)
     tier = 'important' if risk or not ROUTINE.fullmatch(task) else 'light'
-    return {'tier': tier, 'model': policy[tier]['model'],
-            'reasoning_effort': policy[tier]['reasoning_effort'],
-            'reason': ('Consequential work: ' + risk.group(0)) if risk else
-                      ('Recognized routine task' if tier == 'light' else 'Uncertain task; conservative escalation')}
+    selection = {'tier': tier, 'model': table[tier]['model'],
+                 'reasoning_effort': table[tier]['reasoning_effort'],
+                 'reason': ('Consequential work: ' + risk.group(0)) if risk else
+                           ('Recognized routine task' if tier == 'light' else 'Uncertain task; conservative escalation')}
+    if host == 'dsh':
+        selection['provider'] = table.get('provider', 'deepseek-official')
+    return selection
 
 
-def native_plan(task, cwd):
-    selection = select(task)
+def native_plan(task, cwd, selection=None):
+    selection = selection or select(task, 'codex')
     return {'calling_host': 'codex', 'execution_host': 'codex', 'selection': selection,
             'status': 'dispatch_required', 'actual_model_verified': False,
             'dispatch': {'tool': 'spawn_agent', 'agent_type': 'veera_' + selection['tier'],
@@ -47,6 +54,18 @@ def native_plan(task, cwd):
                                     'Use this authorized source directory for relative source paths: '
                                     + json.dumps(str(cwd)) + '. Do not assume your inherited cwd is this directory. '
                                     'Return findings to the parent. Task:\n' + task},
+            'confinement': 'Native subagent inherits parent sandbox, approvals and tools; findings-only instruction is cooperative'}
+
+
+def dsh_plan(task, cwd, selection):
+    return {'calling_host': 'dsh', 'execution_host': 'dsh', 'selection': selection,
+            'status': 'dispatch_required', 'actual_model_verified': False,
+            'dispatch': {'tool': 'subagent',
+                         'provider': selection['provider'],
+                         'model': selection['model'],
+                         'reasoning_effort': selection['reasoning_effort'],
+                         'fork_context': False,
+                         'message': 'Bounded findings-only task. Do not edit, delegate, invoke Veera workflows, access credentials or other sessions, or call mutating connectors. Use this authorized source directory for relative source paths: ' + json.dumps(str(cwd)) + '. Do not assume your inherited cwd is this directory. Return findings to the parent. Task:\n' + task},
             'confinement': 'Native subagent inherits parent sandbox, approvals and tools; findings-only instruction is cooperative'}
 
 
@@ -90,14 +109,16 @@ def verified_model(thread_id, expected):
 def execute(task, cwd, host, executable=None, timeout=300):
     if os.environ.get('VEERA_ROUTER_ACTIVE'):
         raise ValueError('Recursive model routing is forbidden')
-    if host not in ('claude', 'codex'):
+    if host not in ('claude', 'codex', 'dsh'):
         raise ValueError('Unsupported calling host')
     cwd = Path(cwd).resolve(strict=True)
     if not cwd.is_dir():
         raise ValueError('Working directory is required')
-    selection = select(task)
+    selection = select(task, host)
+    if host == 'dsh':
+        return dsh_plan(task, cwd, selection)
     if host == 'codex':
-        return native_plan(task, cwd)
+        return native_plan(task, cwd, selection)
     executable = executable or find_codex()
     if not executable:
         raise ValueError('Packaged Codex CLI is required, including when called from Claude')
@@ -145,12 +166,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--task-file', type=Path, required=True, help='UTF-8 bounded brief; never owner capabilities')
     parser.add_argument('--cwd', type=Path, required=True)
-    parser.add_argument('--host', choices=['claude', 'codex'], required=True)
+    parser.add_argument('--host', choices=['claude', 'codex', 'dsh'], required=True)
     parser.add_argument('--plan', action='store_true', help='Classify without running a model')
     args = parser.parse_args()
     try:
         task = args.task_file.read_text(encoding='utf-8-sig')
-        result = select(task) if args.plan else execute(task, args.cwd, args.host)
+        result = select(task, args.host) if args.plan else execute(task, args.cwd, args.host)
         print(json.dumps(result, ensure_ascii=False))
         return 0 if args.plan or result['status'] in ('completed', 'dispatch_required') else 1
     except (ValueError, OSError) as exc:

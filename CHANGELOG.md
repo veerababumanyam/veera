@@ -1,3 +1,15 @@
+## 0.3.4 — 2026-10-23
+
+- Add a DeepSeek Harness adapter (`adapters/dsh`) with five global skills (`veera-build`, `veera-fix`, `veera-start`, `veera-dashboard`, `veera-route`) and a `.dsh-plugin` manifest.
+- Teach the shared Python controller the `dsh` host: persistent routing resolves from `DSH_HOME` (default `~/.dsh`) in a separate `veera-v1/dsh/sessions` namespace, identity comes from `DSH_SESSION_ID`, and `bootstrap.py --dsh` provides the identity/setup diagnostic.
+- DSH skills resolve the package root from `$VEERA_ROOT` or the checkout, prefer `python`/`py` on Windows, and keep automatic local-verify delivery, ownership, frozen scope, evidence and publish gates unchanged.
+- Automatic DeepSeek model routing: `deepseek-v4-pro` with high reasoning effort for important work and `deepseek-flash` with high reasoning effort for routine work, classified per task like the GPT Sol/Astra router and dispatched as a native subagent via the host subagent model selection setting.
+
+## 0.3.3 — 2026-10-23
+
+- Fingerprint absent or empty uninitialized submodules by their exact Git index commit. Changing the pinned commit invalidates verification evidence.
+- Continue rejecting initialized/nonempty submodules, replacement files, symlink paths, escaping paths and unmerged gitlinks. Ownership, scope and native permission gates are unchanged.
+
 ## 0.3.2 — 2026-10-23
 
 - Fix the live Codex worktree startup failure: canonical Bash events report chat cwd and omit execution workdir. Stop treating that field as proof of execution location; preserve actual owner/state validation, known file-target scope checks and native permissions. Check effective workdir when the host supplies the original execution arguments.

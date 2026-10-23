@@ -1,0 +1,6 @@
+{
+  "name": "veera",
+  "version": "0.3.4",
+  "description": "Bounded Build/Fix delivery with native DeepSeek Harness skills, Windows support and the shared Python controller.",
+  "skills": "./adapters/dsh/skills"
+}

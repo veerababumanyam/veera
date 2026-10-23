@@ -72,7 +72,7 @@ def evaluate(payload, *, cwd_is_execution_context=True):
         return 'Owned Veera state is unavailable; no automatic adoption or repair.'
     tool = payload.get('tool_name', '')
     args = payload.get('tool_input', {})
-    native_policy = os.environ.get('VEERA_HOST') == 'codex'
+    native_policy = os.environ.get('VEERA_HOST') in ('codex', 'dsh')
     if tool in ('Read', 'Glob', 'Grep'):
         target = args.get('file_path') or args.get('path') or str(cwd)
         path = (cwd / target).resolve()

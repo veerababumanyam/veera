@@ -109,6 +109,18 @@ def snapshot(root, scope=None):
         scope = read_json(root / STATE / 'state.json')['contract']['scope']
     result = subprocess.run(['git', '-C', str(root), 'ls-files', '-z', '--cached', '--others', '--exclude-standard'], capture_output=True, check=True, timeout=15)
     names = set(os.fsdecode(result.stdout).split('\0'))
+    index = subprocess.run(['git', '--no-optional-locks', '-C', str(root), 'ls-files', '--stage', '-z'], capture_output=True, check=True, timeout=15)
+    entries = {}
+    for record in index.stdout.split(b'\0'):
+        if record:
+            metadata, name = record.split(b'\t', 1)
+            mode, commit, stage = metadata.split()
+            entries.setdefault(os.fsdecode(name), []).append((mode, commit, stage))
+    gitlinks = {}
+    for name, records in entries.items():
+        if any(mode == b'160000' for mode, _, _ in records):
+            require(len(records) == 1 and records[0][2] == b'0', 'Unmerged gitlink: ' + name)
+            gitlinks[name] = records[0][1].decode('ascii')
     if scope:
         ignored = subprocess.run(['git', '-C', str(root), 'ls-files', '-z', '--others', '--ignored', '--exclude-standard', '--', *scope], capture_output=True, check=True, timeout=15)
         names.update(os.fsdecode(ignored.stdout).split('\0'))
@@ -119,7 +131,17 @@ def snapshot(root, scope=None):
             require(tracked.returncode != 0, 'Reserved state/evidence path contains tracked source: ' + name)
             continue
         path = root / name
-        if path.is_symlink():
+        if name in gitlinks:
+            ancestors = [root / parent for parent in Path(name).parents if parent != Path('.')]
+            require(not any(parent.is_symlink() for parent in (path, *ancestors)),
+                    'Gitlink path must not contain symlinks: ' + name)
+            require(all(not parent.exists() or parent.is_dir() for parent in ancestors),
+                    'Gitlink ancestors must be directories: ' + name)
+            require(path.resolve().is_relative_to(root), 'Gitlink escapes repository: ' + name)
+            require(not path.exists() or (path.is_dir() and next(path.iterdir(), None) is None),
+                    'Gitlink must be absent or an empty uninitialized directory: ' + name)
+            files[name] = digest({'gitlink': gitlinks[name]})
+        elif path.is_symlink():
             files[name] = digest({'symlink': os.readlink(path)})
         elif path.is_file():
             require(path.stat().st_size <= 32 * 1024 * 1024, 'File too large to fingerprint: ' + name)

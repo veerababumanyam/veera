@@ -1,12 +1,22 @@
 # Veera
 
-A standalone Claude Code and Codex plugin for bounded **Build** and **Fix** delivery. Fix includes diagnosis, remediation, regression testing and independent review. Veera provides skills and specialist contracts, a Python run controller, safety hooks and a live local HTML dashboard.
+A standalone Claude Code, Codex, and DeepSeek Harness plugin for bounded **Build** and **Fix** delivery. Fix includes diagnosis, remediation, regression testing and independent review. Veera provides skills and specialist contracts, a Python run controller, safety hooks and a live local HTML dashboard.
 
 ## Install for your Claude Code user
 
 ```bash
 claude plugin install veera --marketplace veerababumanyam/veera --scope user
 ```
+
+## Install for DeepSeek Harness (global, current user)
+
+DeepSeek Harness discovers global skills from `~/.agents/skills` (`dsh-skill-filesystem`, rank 500). Install the DSH adapter skills:
+
+```powershell
+Copy-Item "adapters/dsh/skills/*" "$env:USERPROFILE/.agents/skills" -Recurse
+```
+
+Each skill resolves the package root from `$VEERA_ROOT` or the checkout, reuses the host-agnostic Python controller with `VEERA_HOST=dsh`, and reads `DSH_SESSION_ID`/`DSH_HOME` for identity and persistent routing. See [the DSH adapter](adapters/dsh/README.md).
 
 Describe a software task normally, for example “Add CSV export” or “Fix the login crash.” Veera selects Build/Fix automatically in both hosts; explicit commands and a separate start step are unnecessary. New automatic work is verified locally unless you requested publication. Successful completion automatically releases the chat's task binding while preserving its worktree and records. See [automatic task lifecycle](docs/task-lifecycle.md). User scope makes the plugin available across your projects; only explicitly bound sessions activate task controls. Codex adapter files are included but are not automatically installed or trusted by this command. See the current verification report before relying on unattended delivery.
 
@@ -17,6 +27,7 @@ Describe a software task normally, for example “Add CSV export” or “Fix th
 - Upgrade migration is explicit and limited to one quiescent owner: `python3 scripts/ownership.py --session-id ID --root TASK --legacy-file EXACT_FILE` with the configured persistent environment. It validates owner/task identity, creates exclusively, rejects conflicts and preserves the source. Never bulk migrate or keep both old/new writers active.
 - Hook error policy: unknown/unbound input returns no-op without project access; failures after exact owner-record classification deny. Host-level process startup failure/timeout uses `onFailure: continue` to avoid breaking unrelated sessions. Native host permissions/sandbox remain essential: this cannot guarantee fail-closed ownership if the interpreter never starts.
 - Codex: a separate adapter lives in `adapters/codex`, with automatic Build/Fix routing for ordinary requests, optional explicit commands, portable skills and trusted hooks. It uses `VEERA_HOST=codex` and a separate persistent namespace. Codex uses host permissions without a Veera approval prompt; known patches retain scope checks and other tools retain ownership/state checks. No trust/sandbox bypass flags or global configuration changes are used.
+- DeepSeek Harness: a separate adapter lives in `adapters/dsh` with five global skills (`veera-build`, `veera-fix`, `veera-start`, `veera-dashboard`, `veera-route`). It uses `VEERA_HOST=dsh`, a separate `veera-v1/dsh/sessions` namespace under `DSH_HOME`, and `DSH_SESSION_ID` for identity; automatic Build/Fix selection is coordinator-driven because DSH has no prompt hook. DSH uses its native permission model without a Veera approval prompt. No trust/sandbox bypass flags or global configuration changes are used.
 
 **Historical pilot evidence:** the 0.1.5 pilot encountered Claude bootstrap/read-permission and Codex authentication failures, recorded in [0.1.5 verification](docs/verification-v0.1.5.md). Those historical results are not a current activation check. See [current verification](docs/verification-v0.3.2.md) for a successful fresh Codex delivery, installed-package checks and the remaining Claude account-capacity limitation.
 
@@ -50,7 +61,7 @@ Skills now require task-owned artifact/process inventories and scoped cleanup of
 
 ## Requirements and loading
 
-Linux/macOS with Python 3.10+, or native Windows with Python 3.12+, Git and a supported Claude Code/Codex host. Windows uses byte-range locks and a kill-on-close job for verification children. No Python/npm dependencies or network installation are required. Use a trusted, isolated application checkout or worktree; preserve existing work. The controller requires the Git checkout root and refuses submodules/oversized fingerprint inputs rather than silently omitting them.
+Linux/macOS with Python 3.10+, or native Windows with Python 3.12+, Git and a supported Claude Code/Codex host. Windows uses byte-range locks and a kill-on-close job for verification children. No Python/npm dependencies or network installation are required. Use a trusted, isolated application checkout or worktree; preserve existing work. The controller requires the Git checkout root. Absent or empty uninitialized submodules are fingerprinted by the exact index-pinned commit; initialized/nonempty submodules and oversized fingerprint inputs are refused rather than silently omitted.
 
 ```bash
 claude --plugin-dir /home/veera/veera --effort medium

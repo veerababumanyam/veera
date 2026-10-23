@@ -10,14 +10,25 @@ import secrets
 REGISTRY = None  # Explicit test injection only; production uses host persistent data.
 
 
+def _data_base(host):
+    """Persistent data root for the active host; None when the host cannot supply one."""
+    if host == 'dsh':
+        base = os.environ.get('DSH_HOME')
+        return Path(base) if base else Path.home() / '.dsh'
+    value = os.environ.get('CLAUDE_PLUGIN_DATA')
+    return Path(value) if value else None
+
+
 def registry():
     if REGISTRY is not None:
         return REGISTRY
-    base = os.environ.get('CLAUDE_PLUGIN_DATA')
     host = os.environ.get('VEERA_HOST', 'claude')
-    if not base or not Path(base).is_absolute() or host not in ('claude', 'codex'):
+    if host not in ('claude', 'codex', 'dsh'):
         raise ValueError('Host persistent data directory and supported host are required')
-    path = Path(base) / 'veera-v1' / host / 'sessions'
+    base = _data_base(host)
+    if base is None or not base.is_absolute():
+        raise ValueError('Host persistent data directory and supported host are required')
+    path = base / 'veera-v1' / host / 'sessions'
     if any(p.is_symlink() for p in (path, *path.parents)):
         raise ValueError('Persistent data must not traverse symlinks')
     return path

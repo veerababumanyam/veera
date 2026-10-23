@@ -47,7 +47,11 @@ def skill_link_command(prompt):
 
 
 def invocation(prompt, host):
-    if not isinstance(prompt, str) or host not in ('claude', 'codex'):
+    if not isinstance(prompt, str) or host not in ('claude', 'codex', 'dsh'):
+        return None
+    if host == 'dsh':
+        # DeepSeek Harness has no slash-command hook; the coordinator selects
+        # Build/Fix from the loaded skill and the ordinary request itself.
         return None
     if host == 'codex':
         prompt = skill_link_command(prompt.strip())
@@ -67,7 +71,7 @@ def handle(payload, host='claude'):
         prompt = payload.get('prompt')
         # The coordinator understands intent and conversation history. A verb
         # whitelist here misses short requests, continuations and other languages.
-        if (host not in ('claude', 'codex') or not isinstance(prompt, str) or not prompt.strip()
+        if (host not in ('claude', 'codex', 'dsh') or not isinstance(prompt, str) or not prompt.strip()
                 or prompt.lstrip().startswith(('/', '$', '[', '>', '`', '"', "'", '<'))
                 or os.environ.get('VEERA_ROUTER_ACTIVE')):
             return {}
@@ -83,7 +87,7 @@ def tool_context(payload, host):
     Call only for an unbound session, after existing guard classification.
     """
     if (not isinstance(payload, dict) or payload.get('hook_event_name') != 'PreToolUse'
-            or host not in ('claude', 'codex') or os.environ.get('VEERA_ROUTER_ACTIVE')):
+            or host not in ('claude', 'codex', 'dsh') or os.environ.get('VEERA_ROUTER_ACTIVE')):
         return {}
     args = payload.get('tool_input')
     if not isinstance(args, dict):
@@ -103,7 +107,8 @@ def tool_context(payload, host):
         return {}
     value = re.sub('/+', '/', value.replace('\\', '/')).casefold()
     root = Path(__file__).resolve().parents[1]
-    skills = root / ('adapters/codex/skills' if host == 'codex' else 'skills')
+    skills = root / ('adapters/codex/skills' if host == 'codex'
+                     else 'adapters/dsh/skills' if host == 'dsh' else 'skills')
     for action in ('build', 'fix'):
         target = (skills / action / 'SKILL.md').as_posix().casefold()
         if (tool == 'Read' and value == target) or (tool != 'Read' and re.search(
@@ -118,7 +123,7 @@ def context(payload, host, action):
     try:
         session_id = payload.get('session_id')
         ownership.session_key(session_id)
-        data = os.environ.get('CLAUDE_PLUGIN_DATA')
+        data = os.environ.get('DSH_HOME') if host == 'dsh' else os.environ.get('CLAUDE_PLUGIN_DATA')
         ownership.registry()  # Validate supported persistent location without writing.
         if not data:
             raise ValueError('Persistent data unavailable')
@@ -130,7 +135,8 @@ def context(payload, host, action):
                    'Veera bootstrap BLOCKED: actual session identity and host persistent plugin data are required. Do not invent them or enroll.')
         return {'hookSpecificOutput': {'hookEventName': event, 'additionalContext': message}}
     package = Path(__file__).resolve().parents[1]
-    manifest = package / ('.codex-plugin/plugin.json' if host == 'codex' else '.claude-plugin/plugin.json')
+    manifest_name = {'codex': '.codex-plugin', 'dsh': '.dsh-plugin'}.get(host, '.claude-plugin')
+    manifest = package / manifest_name / 'plugin.json'
     try:
         version = json.loads(manifest.read_text(encoding='utf-8')).get('version')
     except (OSError, ValueError, AttributeError):
@@ -157,7 +163,33 @@ def context(payload, host, action):
             'Pass the returned plugin_data as CLAUDE_PLUGIN_DATA and host as VEERA_HOST to controller children.\n' + json.dumps(context)}}
 
 
+def dsh_identity():
+    """DSH identity diagnostic from the managed DSH_* shell environment."""
+    session_id = os.environ.get('DSH_SESSION_ID')
+    data = os.environ.get('DSH_HOME')
+    if not session_id or not data:
+        return {'veera_bootstrap': {'status': 'blocked',
+                'reason': 'DSH_SESSION_ID and DSH_HOME are required; run from a DeepSeek Harness shell.'}}
+    try:
+        ownership.session_key(session_id)
+        ownership.registry()
+    except (ValueError, OSError) as error:
+        return {'veera_bootstrap': {'status': 'blocked', 'reason': str(error)}}
+    package = Path(__file__).resolve().parents[1]
+    manifest = package / '.dsh-plugin' / 'plugin.json'
+    try:
+        version = json.loads(manifest.read_text(encoding='utf-8')).get('version')
+    except (OSError, ValueError, AttributeError):
+        version = None
+    return {'veera_bootstrap': {'status': 'ready', 'session_id': session_id, 'host': 'dsh',
+            'plugin_data': data, 'package_root': str(package), 'package_version': version,
+            'python_executable': sys.executable, 'enrolled': False}}
+
+
 def main():
+    if '--dsh' in sys.argv[1:]:
+        print(json.dumps(dsh_identity()))
+        return
     try:
         payload = json.load(sys.stdin)
     except (ValueError, OSError):

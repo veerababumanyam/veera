@@ -82,3 +82,31 @@ class AutoRouterTests(unittest.TestCase):
         with patch.dict(r.os.environ, {'VEERA_ROUTER_ACTIVE': '1'}):
             with self.assertRaises(ValueError):
                 r.execute('Summarize README', Path.cwd(), 'codex')
+
+    def test_dsh_routes_to_deepseek_pro_flash_at_high_effort(self):
+        for task in ('Summarize README', 'List files in docs', 'Format markdown', 'Run established checks'):
+            selection = r.select(task, 'dsh')
+            self.assertEqual(selection['model'], 'deepseek-flash', task)
+            self.assertEqual(selection['reasoning_effort'], 'high', task)
+            self.assertEqual(selection['provider'], 'deepseek-account', task)
+        for task in ('Review security', 'Design a payment rollback', 'Fix the login crash', 'Make it work'):
+            selection = r.select(task, 'dsh')
+            self.assertEqual(selection['model'], 'deepseek-v4-pro', task)
+            self.assertEqual(selection['reasoning_effort'], 'high', task)
+            self.assertEqual(selection['tier'], 'important', task)
+
+    def test_dsh_execute_dispatches_a_native_subagent_with_the_selected_model(self):
+        with patch.object(r.subprocess, 'run', side_effect=AssertionError('No child process')):
+            result = r.execute('Review security', Path.cwd(), 'dsh')
+        self.assertEqual(result['status'], 'dispatch_required')
+        self.assertEqual(result['selection']['model'], 'deepseek-v4-pro')
+        self.assertEqual(result['dispatch']['tool'], 'subagent')
+        self.assertEqual(result['dispatch']['provider'], 'deepseek-account')
+        self.assertEqual(result['dispatch']['model'], 'deepseek-v4-pro')
+        self.assertEqual(result['dispatch']['reasoning_effort'], 'high')
+        self.assertFalse(result['dispatch']['fork_context'])
+        self.assertFalse(result['actual_model_verified'])
+
+    def test_dsh_returns_to_flash_after_important_work(self):
+        self.assertEqual(r.select('Review security', 'dsh')['model'], 'deepseek-v4-pro')
+        self.assertEqual(r.select('Summarize README', 'dsh')['model'], 'deepseek-flash')
