@@ -41,7 +41,8 @@ class PlatformTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             env = dict(os.environ, PLUGIN_ROOT=str(ROOT), CLAUDE_PLUGIN_ROOT=str(ROOT),
                        PLUGIN_DATA=directory, CLAUDE_PLUGIN_DATA=directory)
-            for trigger in ('$veera:start', '$veera-start'):
+            linked_start = r'[$veera:start](C:\Users\VeeraDesktop\.codex\plugins\cache\veera-plugins\veera\0.2.5\adapters\codex\skills\start\SKILL.md)'
+            for trigger in ('$veera:start', '$veera-start', '$veera:fix Repair fixture', '$veera-build Create fixture', linked_start):
                 payload = {'hook_event_name':'UserPromptSubmit','session_id':'test-fixture-only','prompt':trigger,'cwd':directory}
                 result = subprocess.run(['powershell.exe','-NoProfile','-Command', command], input=json.dumps(payload), env=env, capture_output=True, text=True, timeout=10)
                 self.assertEqual(result.returncode, 0, result.stderr)

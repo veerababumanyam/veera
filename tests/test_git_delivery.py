@@ -51,14 +51,26 @@ class GitDeliveryTests(unittest.TestCase):
         self.assertEqual(d.finish(self.root)['status'], 'ready')
 
     def test_complete_release_once(self):
+        import ownership
+        from session_fixture import cli
+        self.enterContext(patch.object(ownership, 'REGISTRY', self.base / 'sessions'))
+        self.session_id = 'fixture-publish-owner'
+        metadata = d.read_json(self.root / '.veera/workspace.json')
+        metadata['session_id'] = self.session_id
+        d.atomic(self.root / '.veera/workspace.json', metadata)
+        self.capability = ownership.enroll(self.session_id, self.root, metadata['id'])
         self.start()
         self.implement()
         self.ready()
         self.assertEqual((self.original / 'app.py').read_text(), 'value = 1\n')
         # Fixture user explicitly frees main; Veera must never do this itself.
         g.git(self.original, 'switch', '--detach')
-        result = g.publish(self.root)
+        published = cli(self, 'publish', '--root', str(self.root))
+        self.assertEqual(published.returncode, 0, published.stderr)
+        result = json.loads(published.stdout)
         self.assertEqual(result['status'], 'complete')
+        self.assertEqual(result['session_binding'], 'released')
+        self.assertFalse(Path(self.capability).exists())
         self.assertEqual((self.original / 'app.py').read_text(), 'value = 1\n')
         self.assertEqual((self.original / 'VERSION').read_text(), '1.2.3\n')
         self.assertEqual(g.git(self.original, 'rev-parse', 'main'), self.initial)
@@ -374,7 +386,7 @@ class GitDeliveryTests(unittest.TestCase):
         import codex_hook
         self.assert_local_terminal_hook(codex_hook.handle, 'apply_patch', lambda root: {'command': '*** Begin Patch\n*** Update File: ' + str(root / 'app.py') + '\n@@\n-value = 2\n+value = 3\n*** End Patch\n'}, 'exec_command', {'cmd': 'python3 app.py'})
 
-    def test_public_cli_local_init_retains_session_ownership(self):
+    def test_public_cli_releases_successful_local_task_and_allows_next_task(self):
         import ownership
         from session_fixture import cli
         self.local_contract()
@@ -400,9 +412,16 @@ class GitDeliveryTests(unittest.TestCase):
         result = cli(self, 'finish', '--root', str(self.root))
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout)['status'], 'verified-local')
+        self.assertEqual(json.loads(result.stdout)['session_binding'], 'released')
         self.assertEqual(cli(self, 'publish', '--root', str(self.root)).returncode, 2)
         self.assertEqual(cli(self, 'unbind', '--root', str(self.root)).returncode, 2)
-        self.assertTrue(Path(self.capability).is_file())
+        self.assertFalse(Path(self.capability).exists())
+        self.assertIsNone(ownership.lookup(self.session_id))
+        self.assertTrue((self.root / '.veera/state.json').is_file())
+        self.assertEqual((self.root / 'app.py').read_text(), 'value = 2\n')
+        next_task = g.workspace(self.original, 'next-task', self.session_id)
+        self.assertNotEqual(next_task['root'], str(self.root))
+        self.assertEqual(ownership.lookup(self.session_id)['root'], next_task['root'])
 
     def test_delivery_mode_typo_fails_closed(self):
         self.contract['delivery_mode'] = 'local'

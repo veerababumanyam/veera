@@ -104,8 +104,9 @@ def migrate(session_id, root, legacy_file):
 def unbind(session_id, root, capability_file):
     """Release only this routing record after completion, never another session."""
     record = authorize(session_id, root, capability_file)
-    state = json.loads((Path(record['root']) / '.veera/state.json').read_text())
-    if state.get('status') != 'complete':
+    from delivery import status
+    state = status(Path(record['root']))
+    if state.get('status') not in ('complete', 'verified-local'):
         raise ValueError('Only a completed task can release its session binding')
     path = registry() / (session_key(session_id) + '.json')
     path.unlink()

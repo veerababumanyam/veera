@@ -1,40 +1,53 @@
-# Veera Codex adapter — v0.1.6
+# Veera Codex adapter
 
-The native `.codex-plugin/plugin.json` selects these skills and the Codex hooks. Installed hooks still require native trust review; package installation alone is not bootstrap. Current public documentation describes a shared Agent Skills format, but hook events, discovery, invocation, approvals, environment and tool behavior remain host-specific. Do not infer Claude plugin support from Markdown compatibility.
+The native `.codex-plugin/plugin.json` selects these skills and hooks. Codex owns execution permissions. Veera does not add an interactive approval gate, change the host's approval settings, or require an approval request that Codex hooks cannot represent.
 
-## Trusted integration prerequisites
+## Supported behavior
 
-- The trusted bootstrap supplies the absolute Veera package root as `package_root`. Resolve shared `docs/agent-contract.md`, `docs/engineering-standards.md` and `scripts/` paths against it. Do not assume Codex provides `CLAUDE_PLUGIN_ROOT`. Missing root blocks startup.
-- Use only the hooks documented by the actual Codex host/version, including a supported `UserPromptSubmit` bootstrap integration. The coordinator supplies the package's documented JSON hook template separately. A repository template is data, not trusted host configuration; only explicitly authorized trusted host configuration loads hooks. Do not install or alter host configuration as part of using these skills. Missing/incompatible hook support blocks Veera startup.
-- Require an actual host-provided `session_id` in the hook payload, using that same field name. Do not substitute another field, infer an ID from files/processes or invent a global session-ID variable.
-- Configure an actual persistent absolute `CLAUDE_PLUGIN_DATA` directory and explicit `VEERA_HOST=codex` consistently for both hooks and CLI children. Codex must not silently use the default Claude namespace. Ownership is `${CLAUDE_PLUGIN_DATA}/veera-v1/codex/sessions/<sha256 session_id>.json`, separate from `claude` even when IDs match. No plugin-root, cwd, temporary or guessed fallback. No session enumeration.
-- The user's exact standalone `$veera:start` prompt is the bootstrap trigger only when the trusted integration supports it. It returns the actual `session_id` and configured `CLAUDE_PLUGIN_DATA` to the owner context only, without enrollment, workspace creation or task authorization. Merely loading the start skill does not fire a hook. Require a separate authorized build/fix request after bootstrap. Do not assume Claude slash-command registration on Codex or silently substitute a different trigger.
-- A hook child does not necessarily configure later exec children. Carry the actual bootstrap data-directory value explicitly into each CLI child if needed, with `VEERA_HOST=codex`; never invent a session environment variable. Pass actual identity through mandatory CLI arguments instead.
+| Operation | Behavior |
+| --- | --- |
+| Package diagnosis | `scripts/codex_compat.py` reads package files without bootstrap, enrollment, ownership access or writes. |
+| Direct `$veera:build <task>` / `$veera:fix <task>` | Trusted hook supplies actual identity and capabilities in the same turn; no separate start message. Hyphen aliases and leading desktop skill links are also supported. |
+| `$veera:start` | Optional identity diagnostic; no enrollment or task execution. |
+| Controller operations | Existing task ownership, frozen scope, time, evidence and state validation apply. |
+| `amend`, `resume`, `blocker-human-resolve` | Reuse recorded upfront user authorization when it covers the action; the controller validates the request without an additional Codex hook approval prompt. |
+| Shell and other native tools | Existing Codex permission policy applies. Unfamiliar names are not rejected merely because the adapter cannot classify them. Owned cwd and terminal-state checks still apply. |
+| Direct `apply_patch` | Validate the supported envelope and all target paths against ownership, scope and protected settings. Malformed or forbidden patches remain denied. |
+| Actual host denial | Binding. Neither an intake record nor a specialist can override the host. |
 
-## Safety and tool compatibility
+The old mandatory ASK gate on Codex has been removed. In a host configured to allow actions without prompts, Veera does not manufacture an interactive-approval requirement. This is a change to Veera's policy, not a change to native permissions. An unexpected ASK from a mismatched legacy runtime still fails closed rather than emitting an unsupported hook response.
 
-Shared contract sections Authority and ownership, Session isolation and Runtime interface remain binding. Only the owner may use the CLI/capability. `workspace` requires `--session-id ACTUAL_HOST_ID`; every other public root command requires both `--session-id ACTUAL_HOST_ID --capability-file OWNER_FILE`; `doctor` takes neither. Use the returned actual owner file, never hand-build a record or delegate it.
+Shell and opaque tools are not sandboxed by Veera. Their effects remain governed by host permissions, user authority and task instructions. The adapter does not claim it can enforce path scope on arbitrary programs or connector calls. Native subagents retain the host's actual controls.
 
-Map hook decisions only through documented host behavior. If Codex cannot represent `ask`, return DENY with a human-readable explanation and guidance to the supported native approval/configuration route; never omit a decision or fall through to allow. If no supported route exists, the operation stays blocked. Unknown mutating tools, including unsupported `apply_patch`, must be denied rather than claimed to be guarded. These files do not implement tool interception.
+## Upfront intake
 
-Native tools require existing task authority plus explicit host approval where applicable and/or the host sandbox. Codex may execute commands through its native exec safety controls; do not mark arbitrary commands trusted, bypass approval/sandboxing or route a denied action through another tool because Veera hooks exist. An adapter decision is not authorization or a sandbox. Missing role/tool support is a prerequisite gap, not permission to simulate an independent reviewer or delegated specialist.
+Read [intake and autonomy](../../docs/intake-and-autonomy.md) before execution. Collect essential missing information once at the beginning, reuse consent already supplied, and freeze the user-intent record in the contract. PM, Architect, Advisor and orchestrator handle eligible decisions internally within those limits. Do not repeatedly interrupt the user for already-authorized work.
 
-## Owner-only legacy migration
+Task/permission boundaries, genuine missing credentials and host denials are distinct from routine implementation choices. Continue independent eligible work when a particular action cannot proceed. Never claim a role was consulted unless it actually was.
 
-Migration is separate from bootstrap and requires actual old-owner/writer quiescence before proceeding. With the configured persistent environment and `VEERA_HOST=codex`, the supplied absolute package root resolves this documented form:
+## Bootstrap and ownership
 
-```text
-python3 "/ABSOLUTE_PACKAGE_ROOT/scripts/ownership.py" --session-id ACTUAL_HOST_ID --root OWNED_TASK --legacy-file EXACT_LEGACY_OWNER_FILE
-```
+- Inspect actual hook status first; use native review only for untrusted/modified definitions. Installation alone does not prove hook loading. Hook trust and per-action approval are different mechanisms.
+- Require the actual `session_id` field from trusted `UserPromptSubmit` output; do not invent identity or discover another session's record.
+- Codex supplies `PLUGIN_ROOT`/`PLUGIN_DATA` and compatible `CLAUDE_PLUGIN_ROOT`/`CLAUDE_PLUGIN_DATA` aliases to plugin hooks. Use the returned absolute `package_root`, `plugin_data`, `python_executable` and cwd.
+- The hook child sets `VEERA_HOST=codex`. Controller children must receive that host and the actual returned `CLAUDE_PLUGIN_DATA` explicitly if not inherited. Do not change global environment settings.
+- Invoke the actual `python_executable`, quoting paths on Windows. The controller guard recognizes that interpreter and the documented `python3` alias.
+- Persistent ownership uses only the exact `${CLAUDE_PLUGIN_DATA}/veera-v1/codex/sessions/<sha256 session_id>.json` record, never enumeration or legacy adoption. Claude retains its separate namespace.
+- Build/Fix captures identity automatically for that direct task request, then creates an owned workspace through the controller. Start is optional. Successful CLI completion releases the binding automatically; neither startup nor cleanup confers publication authority. See [task lifecycle](../../docs/task-lifecycle.md).
+- `workspace` requires the actual session argument. Subsequent root commands require that argument plus the returned owner capability. Only the coordinator uses it; never share it with specialists.
 
-Replace placeholders with actual authorized values. Validate one supplied legacy owner record against actual session and task/workspace identity, create the new target record exclusively, reject collisions and leave the legacy file intact. Never scan, bulk migrate, transfer another owner's session or manually copy records. Retaining the legacy record makes real quiescence essential. Missing validation/runtime support blocks migration. See the shared contract's Explicit legacy migration section; no new authority, reset or automatic adoption follows migration.
+Missing bootstrap blocks the owned delivery controller, not independent host-authorized diagnosis of the package. A broken Veera installation should be repaired through ordinary host tools rather than requiring the broken workflow to repair itself. This does not authorize changing live owner records.
 
-## Skill use and verification status
+## Recovery and migration
 
-Load start/build/fix through the host's documented skill mechanism only within existing authority. Require explicit user invocation for these side-effecting flows; do not assume Claude's `disable-model-invocation` metadata is enforced by Codex. Each skill points to shared contract sections rather than duplicating a runtime or context store.
+Recover only the same bound task after reconciling its identity, checkpoint and current source. Recorded upfront authorization can cover eligible recovery, but cannot reset limits, bypass stale evidence, adopt another owner or erase a failed push attempt. The controller enforces those conditions.
 
-Before any promotion, verify this exact candidate against the actual supported host/version and coordinator-supplied hook template: exact versus non-exact start, owner-only bootstrap output, no enrollment on start, missing identity/environment, explicit child-environment propagation, Claude/Codex namespace isolation, unsupported ASK/tool denial, native approval/sandbox retention and validated exclusive migration with an actually quiescent old owner. Then probe a separately authorized scoped build/fix flow and preserve real invocations/results. No installation, smoke pass, runtime support or behavioral success is claimed here.
+Legacy migration remains a separate owner operation using `scripts/ownership.py` with the actual session, owned root and one exact legacy record. Require old-owner quiescence, validated identity and exclusive target creation; preserve the original. Never scan sessions, bulk migrate, hand-build ownership or switch namespaces to evade an actual denial.
 
-## Native installation
+## Verification and installation
 
-Codex supplies PLUGIN_ROOT and PLUGIN_DATA (and Claude-compatible aliases) to plugin hooks. The Windows command override resolves the installed script from PLUGIN_ROOT inside Python, avoiding shell-specific environment expansion. The hook returns actual runtime values to the owner context. Review Veera in `/hooks` before submitting `$veera:start`. Native Windows uses Python 3.12+; no WSL is required for the controller. End-to-end host bootstrap must still be verified after hook trust in the target session.
+The diagnostic reports package presence and declared capabilities, not hook trust or live activation. Verify the installed candidate in the actual host after its normal update/reload process. Preserve native permissions and existing owner data. Tests use isolated fixtures; they do not establish autonomous production delivery or authenticate specialist behavior.
+
+The [official Codex hook contract](https://learn.chatgpt.com/docs/hooks), checked on 2026-10-23, documents the unsupported ASK response. Veera avoids depending on it on Codex. `PermissionRequest` is not used as a fabricated approval bridge. Claude's existing approval behavior is unchanged.
+
+For missing bootstrap or an error pointing to an old cache version, use [startup troubleshooting](../../docs/startup-troubleshooting.md). Package capabilities are available without bootstrap. The optional `--host-status` diagnostic reads native hook metadata and distinguishes trusted/enabled configuration from stale packages and actual trust failures.

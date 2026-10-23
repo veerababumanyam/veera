@@ -1,13 +1,23 @@
 #!/usr/bin/env python3
-"""Codex hook adapter: unsupported Claude ASK must become an explicit denial."""
+"""Codex task guard; execution permissions belong to the host, not an ASK shim."""
 import json
 import os
 import sys
 
-os.environ['VEERA_HOST'] = 'codex'
 import bootstrap
 import ownership
 import safety
+from codex_compat import UNEXPECTED_ASK
+
+
+def native_decision(result):
+    """Every safety result, including patch targets, crosses this boundary."""
+    specific = result.get('hookSpecificOutput', {})
+    if specific.get('permissionDecision') == 'ask':
+        return {'hookSpecificOutput': {
+            **specific, 'hookEventName': 'PreToolUse', 'permissionDecision': 'deny',
+            'permissionDecisionReason': UNEXPECTED_ASK + ' ' + specific.get('permissionDecisionReason', '')}}
+    return result
 
 
 def handle(payload):
@@ -46,19 +56,16 @@ def handle(payload):
         for target in targets:
             result = safety.handle({**payload, 'tool_name': 'Write', 'tool_input': {'file_path': target}})
             if result:
-                return result
+                return native_decision(result)
         return {}
-    elif tool not in ('Bash', 'Read', 'Glob', 'Grep', 'ToolSearch'):
-        return {'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'permissionDecision': 'deny', 'permissionDecisionReason': 'Veera Codex adapter cannot safely classify this tool. Use native approval and an explicitly supported task-scoped operation; do not bypass this denial.'}}
-    result = safety.handle(normalized)
-    specific = result.get('hookSpecificOutput', {})
-    if specific.get('permissionDecision') == 'ask':
-        specific['permissionDecision'] = 'deny'
-        specific['permissionDecisionReason'] = 'Human approval required outside this tool call; Codex hooks do not support ASK. ' + specific['permissionDecisionReason']
-    return result
+    # Other tools retain owner/cwd/terminal checks. Their execution permissions
+    # remain with Codex; an unfamiliar name alone is not a reason to block work.
+    return native_decision(safety.handle(normalized))
 
 
 def main():
+    # Set only in the actual hook child, never as a side effect of importing it.
+    os.environ['VEERA_HOST'] = 'codex'
     try:
         payload = json.load(sys.stdin)
     except (ValueError, OSError):

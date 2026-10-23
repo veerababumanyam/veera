@@ -1,3 +1,36 @@
+## 0.2.7 — 2026-10-23
+
+- Recognize Codex desktop skill links and surrounding whitespace, including stale Veera cache links, while retaining host-provided identity and using the running package version.
+- Add an opt-in, read-only native hook-status diagnostic. Missing context no longer means capabilities are unavailable or hooks necessarily require trust.
+- Replace repetitive start-only recovery guidance with evidence-based startup troubleshooting. Existing hook definitions and trust settings are unchanged.
+
+## 0.2.6 — 2026-10-23
+
+- Add researched requirements discovery, a read-only requirements analyst, and an upfront interview with evidence-based options and recommendations before planning. PM/Architect/Advisor handle eligible decisions internally after implementation starts.
+- Validate frozen discovery traceability and append-only amendments; display requirements and the plan in the existing HTML dashboard.
+
+- Direct Build/Fix and dashboard commands receive host identity in the same prompt; the separate start command is optional.
+- Successful public CLI completion automatically releases the current chat's task binding while preserving worktrees and records. Incomplete work retains recovery state. Cleanup errors never trigger another publication.
+
+## 0.2.5 — 2026-10-23
+
+- Avoid unchanged state rewrites on the status/guard hot path while preserving fresh integrity, ownership and deadline validation; repeatable local measurements are in `docs/performance.md`.
+- Build/Fix starts the live dashboard before implementation, opens it in the browser, and provides its saved address on request through `dashboard-info` and the dashboard skill.
+- The dashboard retains a validated per-task address and reuses one server; stale URLs are not presented as live.
+- Routine GPT-6.1 Sol routing now uses medium reasoning effort in policy, role and profile configuration.
+
+## 0.2.4 — 2026-10-23
+
+### Fixed
+- Codex follows existing native permissions without Veera's extra interactive approval gate. Controller recovery reuses actual recorded authorization while retaining owner, checkpoint, scope, state and evidence validation.
+- No import-time host namespace mutation; protect Codex settings, permit adapter documentation reads, and normalize every hook decision consistently.
+- Correct terminal stop controls and distinguish missing timing from measured values.
+
+### Added
+- Validated, frozen upfront intake for user consent, project inputs, assumptions and delegated internal decisions.
+- Independent package diagnosis without requiring Veera delivery bootstrap.
+- Redesigned live dashboard with responsive navigation and safe HTML task/handbook documents, search and linked subdocuments.
+
 ## 0.2.2
 
 ### Fixed

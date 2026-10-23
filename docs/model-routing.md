@@ -1,8 +1,10 @@
 # Automatic Veera model routing
 
-Veera selects gpt-6.1-sol with low reasoning for recognized routine findings-only briefs, and gpt-6-astra with high reasoning for consequential, mixed or uncertain work. User instructions take precedence. Classification uses conservative full-brief matching; consequential terms override routine terms. Each bounded item is classified anew, so subsequent routine work returns to Sol.
+Veera selects gpt-6.1-sol with medium reasoning for recognized routine findings-only briefs, and gpt-6-astra with high reasoning for consequential, mixed or uncertain work. User instructions take precedence. Classification uses conservative full-brief matching; consequential terms override routine terms. Each bounded item is classified anew, so subsequent routine work returns to Sol.
 
 ## Codex native integration
+
+The Codex adapter adds no separate shell-approval requirement. Classifier execution and native delegation use the existing host permission policy and the frozen upfront user intent. The parent retains owner capabilities, task decisions and all writes; actual host denials remain binding.
 
 Invoke `$veera:route` with a bounded brief. The installed skill runs `scripts/model_router.py --host codex --cwd CHECKOUT --task-file BRIEF.txt` to classify locally. It returns a dispatch descriptor; it does not launch another Codex process. The parent uses the native subagent tool with the selected role, waits for completion and returns findings. On hosts exposing explicit model/effort overrides, use those exact selected values with a fresh context instead of a role.
 
@@ -21,3 +23,7 @@ Claude's `/veera:route` continues to use the packaged, signed-in Codex CLI for O
 Selection and dispatch are not completion. Wait for the native result and record selected role, model, actual child ID and completion. Verify the model from native runtime turn context for only the exact newly created child session when available. Never inspect other owners or accept a delegate's self-description as model evidence. If unavailable, report verification as unavailable. Do not downgrade required Astra work or silently substitute another model. Model policy does not waive independent review, correctness checks or task limits. The active coordinator/composer model remains controlled by the host.
 
 Reference: [Official Codex subagent configuration](https://learn.chatgpt.com/docs/agent-configuration/subagents).
+
+## Requirements analysis
+
+For underspecified/consequential Build/Fix work, supply the requirements-analyst brief and relevant source pointers before planning. Codex uses the existing important native findings-only role; Claude can use the packaged native `requirements-analyst` under its selected Claude model. This requires no extra always-running service or model startup on unrelated prompts. Record actual delegation or coordinator fallback honestly, as described in [requirements analysis](requirements-analysis.md). Independent final review remains a separate obligation.

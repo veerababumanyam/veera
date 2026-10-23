@@ -22,6 +22,7 @@ class AutoRouterTests(unittest.TestCase):
     def test_routine_and_unknown(self):
         for task in ('Summarize README', 'List files in docs', 'Format markdown', 'Run established checks'):
             self.assertEqual(r.select(task)['model'], 'gpt-6.1-sol')
+            self.assertEqual(r.select(task)['reasoning_effort'], 'medium')
         self.assertEqual(r.select('Make it work')['model'], 'gpt-6-astra')
 
     def test_both_hosts_use_codex_without_permission_bypass(self):
@@ -71,6 +72,7 @@ class AutoRouterTests(unittest.TestCase):
         for tier in ('light', 'important'):
             role = tomllib.loads((r.ROOT / f'adapters/codex/agents/veera_{tier}.toml').read_text())
             self.assertEqual(role['model'], r.select('Summarize README' if tier == 'light' else 'Review security')['model'])
+            self.assertEqual(role['model_reasoning_effort'], r.select('Summarize README' if tier == 'light' else 'Review security')['reasoning_effort'])
             self.assertNotIn('sandbox_mode', role)
             self.assertNotIn('approval_policy', role)
 

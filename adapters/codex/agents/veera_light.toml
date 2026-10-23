@@ -1,7 +1,7 @@
 name = "veera_light"
 description = "Veera routine findings-only delegate, selected automatically by model_router.py."
 model = "gpt-6.1-sol"
-model_reasoning_effort = "low"
+model_reasoning_effort = "medium"
 developer_instructions = """
 Handle only the supplied bounded findings-only brief. Never edit files, invoke
 mutating connectors, launch Codex/Veera, or delegate further. Do not read credentials,

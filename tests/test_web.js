@@ -6,7 +6,7 @@ const vm = require('node:vm');
 const path = require('node:path');
 const source = fs.readFileSync(path.join(__dirname, '../web/app.js'), 'utf8');
 const elements = new Map();
-function element() { return {textContent: '', disabled: false, children: [], replaceChildren(...items) {this.children = items;}, addEventListener(type, callback) {this[type] = callback;}}; }
+function element() { return {textContent: '', disabled: false, children: [], attributes: {}, append(...items) {this.children.push(...items);}, setAttribute(key, value) {this.attributes[key] = value;}, replaceChildren(...items) {this.children = items;}, addEventListener(type, callback) {this[type] = callback;}}; }
 const get = id => { if (!elements.has(id)) elements.set(id, element()); return elements.get(id); };
 let fail = false;
 const requests = [];
@@ -16,13 +16,22 @@ const context = vm.createContext({document: {getElementById: get, createElement:
   vm.runInContext(source, context);
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(get('request').textContent, 'FIX: <img onerror=alert(1)>');
-  assert.equal(get('checks').children[0].textContent, 'unit: not run');
+  assert.equal(get('checks').children[0].children[1].textContent, 'not run');
+  assert.equal(get('check-count').textContent, '0 / 1');
   assert.match(get('connection').textContent, /Live/);
   await get('stop').click();
   assert(requests.some(([url, options]) => url === 'stop' && options.method === 'POST' && options.headers['X-Delivery-Control'] === 'stop'));
+  run.status = 'verified-local';
+  await vm.runInContext('refresh()', context);
+  assert.equal(get('stop').disabled, true);
+  assert.equal(get('state').textContent, 'Verified locally · unpublished');
+  const count = requests.length;
+  await get('stop').click();
+  assert.equal(requests.length, count);
+  assert.equal(vm.runInContext('duration(undefined)', context), 'Unknown');
   fail = true;
   await vm.runInContext('refresh()', context);
   assert.match(get('connection').textContent, /Disconnected/);
   assert.equal(get('stop').disabled, true);
-  console.log('PASS: 6 dashboard JS assertions (rendering, not-run, connection, stop, disconnect, disabled control)');
+  console.log('PASS: 11 dashboard assertions (rendering, counts, stop, terminal state, unknown timing, disconnect)');
 })().catch(error => {console.error(error); process.exitCode = 1;});

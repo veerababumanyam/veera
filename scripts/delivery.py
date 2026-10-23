@@ -85,13 +85,17 @@ def load(directory):
 
 
 def expire(state):
+    changed = False
     if state['status'] not in TERMINAL and state.get('soft_deadline') and time.time() >= state['soft_deadline'] and not state.get('soft_notified'):
         state['soft_notified'] = True
         state['replan_required'] = True
         event(state, 'replan', 'Soft target reached: PM/Architect/Advisor must replan and continue the full task; do not abandon or weaken acceptance')
+        changed = True
     if state['status'] not in TERMINAL and time.time() >= state['deadline']:
         state['status'] = 'budget-exhausted'
         event(state, 'stop', 'Absolute wall-clock budget exhausted; no automatic renewal')
+        changed = True
+    return changed
 
 
 def active(state):
@@ -138,6 +142,12 @@ def changed(state, current):
 
 def validate_contract(contract, root):
     require(isinstance(contract, dict), 'Contract must be an object')
+    if 'intake' in contract:
+        from intake import validate
+        try:
+            validate(contract['intake'])
+        except ValueError as error:
+            raise DeliveryError(str(error)) from error
     require(contract.get('delivery_mode', 'publish') in ('publish', 'local-verify'), 'Unknown delivery_mode')
     if contract.get('delivery_mode') == 'local-verify':
         require('release' not in contract, 'Local verification must omit release; it grants no release authority')
@@ -165,6 +175,12 @@ def validate_contract(contract, root):
         require(isinstance(criterion.get('id'), str) and criterion['id'] and criterion['id'] not in ids, 'Invalid or duplicate criterion ID')
         ids.add(criterion['id'])
         require(criterion.get('text') and criterion.get('checks') and set(criterion['checks']) <= checks, 'Each criterion needs text and known checks')
+    if 'discovery' in contract:
+        from discovery import validate
+        try:
+            validate(contract['discovery'], ids, checks)
+        except ValueError as error:
+            raise DeliveryError(str(error)) from error
     require(isinstance(contract.get('max_repairs', 3), int) and 0 <= contract.get('max_repairs', 3) <= 3, 'Repair ceiling must be 0–3')
     if contract.get('ui'):
         require(contract.get('visual_references'), 'UI work requires visual references')
@@ -208,8 +224,8 @@ def init(root, mode, request, contract, minutes, hard_minutes=None):
 def status(root):
     with locked(root) as directory:
         state = load(directory)
-        expire(state)
-        save(directory, state)
+        if expire(state):
+            save(directory, state)
         return state
 
 
@@ -494,6 +510,72 @@ def resume(root, report):
         return state
 
 
+def amend(root, report):
+    """Record an authorized additive contract delta without resuming or granting time."""
+    root = Path(root).resolve()
+    required = {'run_id', 'checkpoint_id', 'expected_contract_hash', 'authorization', 'reason'}
+    additions = {'add_scope', 'add_criteria', 'add_checks'}
+    require(isinstance(report, dict) and required <= report.keys() and report.keys() <= required | additions | {'add_discovery'}, 'Amendment requires exact identity/authorization fields and additive fields only')
+    for key in required:
+        require(isinstance(report[key], str) and report[key].strip(), 'Amendment requires nonempty ' + key)
+    for key in additions:
+        require(isinstance(report.get(key, []), list), key + ' must be a list')
+    require(any(report.get(key) for key in additions), 'Amendment must add scope, criteria or checks')
+    for name in report.get('add_scope', []):
+        require(isinstance(name, str) and name and not re.search(r'[\\:*?\[\]|<>"\x00-\x1f]', name), 'Use explicit canonical repository-relative scope')
+        parts = name.removesuffix('/').split('/')
+        require(all(part and part not in ('.', '..') and part == part.strip() and not part.endswith('.') for part in parts), 'Use explicit canonical repository-relative scope')
+        require(not any(re.fullmatch(r'(?i:con|prn|aux|nul|conin\$|conout\$|com[1-9\u00b9\u00b2\u00b3]|lpt[1-9\u00b9\u00b2\u00b3])', part.split('.')[0].rstrip(' ')) for part in parts), 'Windows device names are invalid scope entries')
+        require(not any(part.lower() in ('.git', STATE, '.claude', '.codex', '.veera-artifacts', 'credentials.json', 'id_rsa', 'id_ed25519') or part.lower().startswith('.env') for part in parts), 'Protected scope entry')
+        target = root / name
+        require(target.resolve().is_relative_to(root), 'Scope escapes repository')
+        for path in (target, *target.parents):
+            if path == root:
+                break
+            require(not path.is_symlink() and not (hasattr(path, 'is_junction') and path.is_junction()) and not (path / '.git').exists(), 'Scope must not traverse links, junctions or nested repositories')
+    for key, fields in (('add_criteria', {'id', 'text', 'checks'}), ('add_checks', {'id', 'kind', 'argv', 'count_pattern', 'timeout_seconds', 'artifacts'})):
+        for entry in report.get(key, []):
+            require(isinstance(entry, dict) and entry.keys() <= fields, 'Unknown or invalid ' + key + ' fields')
+            require(isinstance(entry.get('id'), str) and entry['id'].strip(), 'Addition needs a nonempty ID')
+            if key == 'add_criteria':
+                require(isinstance(entry.get('text'), str) and entry['text'].strip() and isinstance(entry.get('checks'), list) and all(isinstance(item, str) for item in entry['checks']), 'Criterion needs text and check IDs')
+    with locked(root) as directory:
+        state = load(directory)
+        require(state.get('version') == 2 and state['status'] in ('blocked', 'budget-exhausted', 'user-stopped'), 'Only stopped v2 work may be amended')
+        require(not state.get('running') and not state.get('push_attempted'), 'Reconcile running command/publication before amendment')
+        require(state['root'] == str(root) and report['run_id'] == state['run_id'], 'Amendment run identity mismatch')
+        require(report['expected_contract_hash'] == state['contract_hash'], 'Expected contract hash is stale')
+        saved = state.get('checkpoint', {})
+        require(saved and saved['id'] == report['checkpoint_id'], 'Use the exact saved checkpoint')
+        current = snapshot(root, state['contract']['scope'])
+        require(saved['fingerprint'] == digest(current), 'Checkpoint source changed; inspect and record a new checkpoint')
+        previous = state['contract']
+        contract = dict(previous)
+        for key in ('scope', 'criteria', 'checks'):
+            contract[key] = previous[key] + report.get('add_' + key, [])
+        if 'add_discovery' in report:
+            from discovery import append
+            try:
+                contract['discovery'] = append(previous.get('discovery'), report['add_discovery'])
+            except ValueError as error:
+                raise DeliveryError(str(error)) from error
+        require(len(set(contract['scope'])) == len(contract['scope']), 'Duplicate scope entry')
+        validate_contract(contract, root)
+        from git_delivery import validate_inputs
+        if report.get('add_scope'):
+            validate_inputs(root, report['add_scope'])
+        require(snapshot(root, contract['scope']) == current, 'Expanded scope changes checkpoint coverage; reconcile inputs before amendment')
+        amendment = {'id': uuid.uuid4().hex, 'at': time.time(), 'prior_contract': previous, 'prior_contract_hash': state['contract_hash'], 'contract_hash': digest(contract), 'report': report}
+        state.setdefault('amendments', []).append(amendment)
+        state['contract'] = contract
+        state['contract_hash'] = amendment['contract_hash']
+        state['checks'] = {}
+        state['review'] = None
+        event(state, 'amend', amendment)
+        save(directory, state)
+        return state
+
+
 def decision(root, report):
     def update(state):
         require(report.get('owner') == 'pm' and {'architect', 'advisor'} <= set(report.get('consulted', [])), 'Material decisions require PM ownership and Architect/Advisor consultation')
@@ -510,7 +592,7 @@ def decision(root, report):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     subs = parser.add_subparsers(dest='command', required=True)
-    for command in ('init', 'status', 'phase', 'check', 'review', 'finish', 'stop', 'repair', 'decision', 'dashboard', 'fingerprint', 'archive', 'workspace', 'release-prepare', 'publish', 'checkpoint', 'resume', 'release-reconcile', 'context', 'context-import', 'context-item', 'blocker', 'blocker-human-resolve', 'unbind'):
+    for command in ('init', 'status', 'phase', 'check', 'review', 'finish', 'stop', 'repair', 'decision', 'dashboard', 'dashboard-info', 'fingerprint', 'archive', 'workspace', 'release-prepare', 'publish', 'checkpoint', 'resume', 'amend', 'release-reconcile', 'context', 'context-import', 'context-item', 'blocker', 'blocker-human-resolve', 'unbind'):
         sub = subs.add_parser(command)
         sub.add_argument('--root', required=True, type=Path)
         sub.add_argument('--session-id', required=True)
@@ -528,12 +610,13 @@ def main():
             sub.add_argument('--name', choices=PHASES, required=True)
         elif command in ('check', 'context-item'):
             sub.add_argument('--id', required=True)
-        elif command in ('review', 'decision', 'resume', 'context-import', 'blocker', 'blocker-human-resolve'):
+        elif command in ('review', 'decision', 'resume', 'amend', 'context-import', 'blocker', 'blocker-human-resolve'):
             sub.add_argument('--file', required=True)
         elif command in ('stop', 'repair', 'checkpoint', 'release-reconcile'):
             sub.add_argument('--reason', required=True)
         elif command == 'dashboard':
             sub.add_argument('--port', type=int, default=0)
+            sub.add_argument('--no-open', action='store_true', help='Serve without opening a browser (headless host)')
     subs.add_parser('doctor')
     args = parser.parse_args()
     try:
@@ -574,7 +657,7 @@ def main():
                 result = task_context.human_resolve(args.root, read_json(args.file))
             else:
                 result = task_context.blocker(args.root, read_json(args.file))
-        elif command in ('review', 'decision', 'resume'):
+        elif command in ('review', 'decision', 'resume', 'amend'):
             result = globals()[command](args.root, read_json(args.file))
         elif command == 'release-reconcile':
             from git_delivery import reconcile
@@ -585,10 +668,22 @@ def main():
             result = {'fingerprint': digest(snapshot(args.root))}
         elif command == 'dashboard':
             from dashboard import serve
-            serve(args.root, args.port)
+            serve(args.root, args.port, open_browser=not args.no_open)
             return
+        elif command == 'dashboard-info':
+            from dashboard import info
+            result = info(args.root)
         else:
             result = globals()[command](args.root)
+        if command in ('finish', 'publish') and result.get('status') in ('complete', 'verified-local'):
+            # Completion is durable before releasing only this owner's binding.
+            # A cleanup failure must not turn successful publication into a retry.
+            try:
+                ownership.unbind(args.session_id, args.root, args.capability_file)
+                result['session_binding'] = 'released'
+            except (OSError, ValueError, DeliveryError, KeyError, TypeError) as error:
+                result['session_binding'] = 'cleanup-required'
+                result['session_cleanup_error'] = str(error)
         print(json.dumps(result, indent=2))
         if result.get('status') in ('failed', 'blocked', 'budget-exhausted'):
             sys.exit(1)

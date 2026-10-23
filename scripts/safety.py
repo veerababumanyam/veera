@@ -30,6 +30,11 @@ def status(root):
     return implementation(root)
 
 
+def controller_command(words):
+    return (len(words) >= 3 and words[1] == str(Path(__file__).resolve().parent / 'delivery.py')
+            and (words[0] == 'python3' or Path(words[0]).resolve() == Path(sys.executable).resolve()))
+
+
 def scoped(name, scope):
     from delivery import scoped as implementation
     return implementation(name, scope)
@@ -66,11 +71,15 @@ def evaluate(payload):
         return 'Owned Veera state is unavailable; no automatic adoption or repair.'
     tool = payload.get('tool_name', '')
     args = payload.get('tool_input', {})
+    native_policy = os.environ.get('VEERA_HOST') == 'codex'
     if tool in ('Read', 'Glob', 'Grep'):
         target = args.get('file_path') or args.get('path') or str(cwd)
         path = (cwd / target).resolve()
         plugin = Path(__file__).resolve().parents[1]
-        plugin_docs = path.is_relative_to(plugin / 'docs') or path.is_relative_to(plugin / 'agents') or path.is_relative_to(plugin / 'skills')
+        plugin_docs = (path.is_relative_to(plugin / 'docs') or path.is_relative_to(plugin / 'agents')
+                       or path.is_relative_to(plugin / 'skills')
+                       or path == plugin / 'adapters/codex/README.md'
+                       or path.is_relative_to(plugin / 'adapters/codex/skills'))
         if not path.is_relative_to(root) and not plugin_docs:
             return 'Read/search target is outside this task; unrelated project context is not authorized.'
         if path.is_relative_to(root):
@@ -92,7 +101,8 @@ def evaluate(payload):
             return 'Cannot validate malformed shell command.'
         lexer = shlex.shlex(raw_command, posix=True, punctuation_chars=True)
         lexer.whitespace_split = True
-        if any(t in (';', '&&', '||', '|', '&', '>', '>>', '<') for t in lexer) or '$(' in raw_command or '`' in raw_command or '\n' in raw_command:
+        compound = any(t in (';', '&&', '||', '|', '&', '>', '>>', '<') for t in lexer) or '$(' in raw_command or '`' in raw_command or '\n' in raw_command
+        if compound and not native_policy:
             return 'ASK:Compound shell execution requires explicit confinement review'
         # Parse owner options in any order; never let duplicates hide approval rules.
         for flag, expected in (('--session-id', session_id), ('--capability-file', str(capability))):
@@ -113,16 +123,18 @@ def evaluate(payload):
                     return 'Controller identity does not match the calling host session.'
         # Required approval is recognized independently of other argument order.
         script_path = str(Path(__file__).resolve().parent / 'delivery.py')
-        if len(words) >= 3 and words[:2] == ['python3', script_path]:
-            if words[2] in ('resume', 'blocker-human-resolve'):
+        if not compound and controller_command(words):
+            if words[2] in ('resume', 'amend', 'blocker-human-resolve'):
+                if native_policy:
+                    return None  # Controller validates identity, recorded user intent and state.
                 return 'ASK:Explicit user approval is required for this authority-sensitive recovery operation'
         # Narrow escape hatch for reading/archiving finished state, never shell chains.
         script = str(Path(__file__).resolve().parent / 'delivery.py')
-        if len(words) == 5 and words[0] == 'python3' and words[1] == script and words[2] in ('status', 'fingerprint', 'archive', 'context', 'unbind') and words[3] == '--root' and Path(words[4]).resolve() == root:
+        if not compound and len(words) == 5 and controller_command(words) and words[2] in ('status', 'fingerprint', 'archive', 'context', 'unbind', 'dashboard-info') and words[3] == '--root' and Path(words[4]).resolve() == root:
             return None
-        if len(words) == 7 and words[0] == 'python3' and words[1] == script and words[2] == 'blocker-human-resolve' and words[3] == '--root' and Path(words[4]).resolve() == root and words[5] == '--file':
+        if not compound and len(words) == 7 and controller_command(words) and words[2] == 'blocker-human-resolve' and words[3] == '--root' and Path(words[4]).resolve() == root and words[5] == '--file':
             return 'ASK:Confirm the actual human-only blocker is resolved; agent advice cannot grant this authority'
-        if len(words) == 7 and words[0] == 'python3' and words[1] == script and words[2] in ('checkpoint', 'resume') and words[3] == '--root' and Path(words[4]).resolve() == root:
+        if not compound and len(words) == 7 and controller_command(words) and words[2] in ('checkpoint', 'resume') and words[3] == '--root' and Path(words[4]).resolve() == root:
             expected = '--file' if words[2] == 'resume' else '--reason'
             if words[5] == expected:
                 # Ask the host/user rather than authorize a hard-budget extension ourselves.
@@ -152,13 +164,13 @@ def evaluate(payload):
         if not path.is_relative_to(root):
             return 'Write target is outside the authorized repository.'
         relative = path.relative_to(root).as_posix()
-        if any(part in ('.git', '.claude', STATE) or part.startswith('.env') or part in ('credentials.json', 'id_rsa', 'id_ed25519') for part in path.relative_to(root).parts):
+        if any(part.lower() in ('.git', '.claude', '.codex', STATE) or part.lower().startswith('.env') or part.lower() in ('credentials.json', 'id_rsa', 'id_ed25519') for part in path.relative_to(root).parts):
             return 'Protected configuration, run state or secret file requires separate authorization.'
         if relative.startswith('.veera-artifacts/'):
             return None  # Evidence only; ignored source paths are never implementation scope.
         if not scoped(relative, run['contract']['scope']):
             return 'Write target is outside the frozen scope. PM must consult Architect/Advisor; do not silently expand scope.'
-    if tool == 'Bash':
+    if tool == 'Bash' and not native_policy:
         command = args.get('command', '')
         # Arbitrary shell can bypass path checks; require the host's approval,
         # rather than claiming this hook is a shell sandbox.
@@ -167,7 +179,7 @@ def evaluate(payload):
         except ValueError:
             return 'Cannot validate malformed shell command.'
         script = str(Path(__file__).resolve().parent / 'delivery.py')
-        if len(tokens) < 3 or tokens[0] != 'python3' or tokens[1] != script:
+        if not controller_command(tokens):
             return 'ASK:Confirm this command is confined to the owned task and cannot affect another session/project'
         lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
         lexer.whitespace_split = True

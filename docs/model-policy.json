@@ -3,7 +3,7 @@
   "host": "codex",
   "light": {
     "model": "gpt-6.1-sol",
-    "reasoning_effort": "low",
+    "reasoning_effort": "medium",
     "tasks": ["file discovery", "summaries", "documentation", "formatting", "small local edits", "running established checks", "memory updates"]
   },
   "important": {

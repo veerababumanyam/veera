@@ -43,6 +43,38 @@ class HostAdapterTests(unittest.TestCase):
             result = bootstrap.handle({'hook_event_name': 'UserPromptSubmit', 'session_id': 'owner', 'prompt': '/veera:start'})
             self.assertIn('BLOCKED', result['hookSpecificOutput']['additionalContext'])
 
+    def test_task_entry_bootstraps_in_same_prompt_without_enrollment(self):
+        for host, commands in [('claude', ['/veera:build Create a feature', '/veera:fix Repair the issue', '/veera:dashboard']),
+                               ('codex', ['$veera:build Create a feature', '$veera-fix Repair the issue', '$veera:dashboard'])]:
+            with patch.dict(os.environ, {'VEERA_HOST': host}):
+                for prompt in commands:
+                    with self.subTest(host=host, prompt=prompt):
+                        result = bootstrap.handle({'hook_event_name': 'UserPromptSubmit', 'session_id': 'owner', 'cwd': str(self.root), 'prompt': prompt}, host)
+                        data = json.loads(result['hookSpecificOutput']['additionalContext'].split('\n', 1)[1])['veera_bootstrap']
+                        self.assertEqual(data['session_id'], 'owner')
+                        self.assertEqual(data['host'], host)
+                        self.assertIn(data['requested_action'], ('build', 'fix', 'dashboard'))
+                        self.assertFalse(data['enrolled'])
+        self.assertFalse(self.data.exists())
+        self.assertEqual(list(self.root.iterdir()), [])
+
+    def test_mentions_wrong_host_and_similar_commands_do_not_activate(self):
+        for host in ('claude', 'codex'):
+            for prompt in ('Explain /veera:fix', '`$veera:build`', '/veera:fixer thing', '$veera:build-more',
+                           '/veera:route list files', '$veera:diagnose', '', None, ['/veera:fix']):
+                self.assertEqual(bootstrap.handle({'hook_event_name': 'UserPromptSubmit', 'session_id': 'owner', 'prompt': prompt}, host), {})
+        for host, prompt in [('claude', '$veera:fix issue'), ('codex', '/veera:fix issue')]:
+            self.assertEqual(bootstrap.handle({'hook_event_name': 'UserPromptSubmit', 'session_id': 'owner', 'prompt': prompt}, host), {})
+
+    def test_direct_task_still_requires_actual_host_identity_and_data(self):
+        for session in (None, '../../invalid'):
+            result = bootstrap.handle({'hook_event_name': 'UserPromptSubmit', 'session_id': session, 'prompt': '/veera:fix issue'})
+            self.assertIn('BLOCKED', result['hookSpecificOutput']['additionalContext'])
+        with patch.dict(os.environ, {'CLAUDE_PLUGIN_DATA': ''}):
+            result = bootstrap.handle({'hook_event_name': 'UserPromptSubmit', 'session_id': 'owner', 'prompt': '/veera:build feature'})
+            self.assertIn('BLOCKED', result['hookSpecificOutput']['additionalContext'])
+        self.assertFalse(self.data.exists())
+
     def test_owner_failure_denies_unbound_failure_noop(self):
         for payload in ([], None, 'string', {'session_id': '../../bad'}, {'session_id': 'stranger'}):
             self.assertEqual(safety.handle(payload), {})
@@ -99,6 +131,26 @@ class HostAdapterTests(unittest.TestCase):
                 self.assertEqual(result['hookSpecificOutput']['permissionDecision'], 'deny')
             result = codex_hook.handle({'session_id': 'owner', 'hook_event_name': 'PreToolUse', 'tool_name': 'apply_patch', 'tool_input': {'command': '...'}})
             self.assertEqual(result['hookSpecificOutput']['permissionDecision'], 'deny')
+
+    def test_cleanup_failure_preserves_success_without_repeating_publish(self):
+        import git_delivery
+        self.session_id, self.capability = 'owner', self.owner()
+        from session_fixture import cli
+        with patch.object(git_delivery, 'publish', return_value={'status': 'complete'}) as publish, patch.object(ownership, 'unbind', side_effect=OSError('fixture cleanup failure')):
+            result = cli(self, 'publish', '--root', str(self.root))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)['status'], 'complete')
+        self.assertEqual(json.loads(result.stdout)['session_binding'], 'cleanup-required')
+        publish.assert_called_once()
+        self.assertTrue(Path(self.capability).exists())
+
+    def test_incomplete_tasks_cannot_release_the_owner_binding(self):
+        capability = self.owner()
+        for state in ('active', 'ready', 'blocked', 'budget-exhausted', 'user-stopped'):
+            with patch.object(d, 'status', return_value={'status': state}):
+                with self.assertRaisesRegex(ValueError, 'completed'):
+                    ownership.unbind('owner', self.root, capability)
+            self.assertTrue(Path(capability).exists())
 
 
 if __name__ == '__main__':

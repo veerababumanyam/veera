@@ -1,26 +1,14 @@
 ---
 name: start
-description: Explicit owner-only Veera bootstrap through a trusted, supported Codex host integration; no enrollment or task execution.
+description: Optional Veera identity diagnostic; Build/Fix captures current chat identity automatically and does not require this command.
 ---
 
-# Veera — Start (Codex)
+# Veera — optional start diagnostic
 
-Guidance v0.1.6. The native Codex manifest selects these skills and the Codex hook adapter. Require explicit user invocation. The coordinator must supply the absolute package root; read `adapters/codex/README.md` and `docs/agent-contract.md` sections Authority and ownership and Session isolation under that root. Do not assume `CLAUDE_PLUGIN_ROOT` or Claude skill invocation controls exist on Codex.
+Build/Fix setup is automatic. Invoke `$veera:build <task>` or `$veera:fix <task>` directly; do not require a separate start message. The trusted UserPromptSubmit hook captures the actual current chat identity without enrollment or project access. Read `docs/task-lifecycle.md` under the actual package root for lifecycle details.
 
-The user submits exactly `$veera:start` as a standalone prompt. Only an actually configured trusted host `UserPromptSubmit` integration performs bootstrap. Reading this skill or a JSON template does not install or fire hooks. Missing documented host support/configuration blocks startup; do not silently substitute another trigger.
+Use `$veera:start` only when the user explicitly wants an identity/setup diagnostic. The plain command and a leading desktop skill link are supported, including surrounding whitespace. Report the real hook result and its `package_version`. Start alone does not begin a task, grant publication authority, or enroll a session. Do not invent IDs, inspect other sessions, alter native permissions or manufacture a bootstrap result. Retain actual identity/data-directory values only in the coordinator's context.
 
-Require actual hook-provided `session_id`, configured persistent absolute `CLAUDE_PLUGIN_DATA` and explicit `VEERA_HOST=codex`. Bootstrap returns the first two only to this owner's context. Never fabricate an ID, invent a global session variable, infer from another session, fall back to plugin-local/cwd storage or share values with specialists/shared artifacts. Hooks and CLI must use the same environment; explicitly carry the actual returned data directory into later CLI children if not inherited.
+Use the returned package root, interpreter, plugin-data location and host for subsequent authorized task commands. Hook trust/loading still belongs to the host. If the hook is unavailable, identify that actual integration failure rather than adding a routine start step to every task.
 
-Start does not enroll, create a workspace, inspect task state, migrate records or authorize build/fix/release. Do not scan sessions. Native permissions and sandbox remain binding; unsupported ASK becomes DENY with human guidance and unknown mutating tools including unsupported `apply_patch` are denied, not bypassed.
-
-Return bootstrap success or the precise prerequisite without copying owner values into shared output. Wait for a separate authorized build/fix request through the host's supported skill invocation mechanism. No hook installation, smoke success or task completion claim.
-
-## Installed bootstrap context
-
-Use the package_root and python_executable returned by the trusted bootstrap hook. The hook also supplies the actual session_id, host, persistent plugin_data, and current cwd. These are runtime values, not placeholders. Set CLAUDE_PLUGIN_DATA to that plugin_data and VEERA_HOST=codex in each controller child. Use quoted forward-slash paths on Windows and `python3` for controller commands. If hooks have not been trusted, use the native `/hooks` review flow and submit `$veera:start` again in a new turn; do not fabricate bootstrap context. Choose the user-selected project checkout, not the projectless chat folder.
-
-## Model selection
-
-Read `docs/model-routing.md` under the resolved package root. Apply `docs/model-policy.json` before each bounded work item: Codex Sol for light work, Astra for important work. Select through supported host controls, report unavailable required models, and do not claim this text switches the current model. Claude keeps its selected native model. Preserve task ownership and existing delegation authority.
-
-For already-authorized read-only specialist work, use `scripts/model_router.py` with a bounded task file instead of selecting a model manually. It automatically executes Sol for recognized routine work and Astra for consequential or uncertain work. See `docs/model-routing.md`. Never share owner capabilities, transfer owner writes or bypass a denied action through this bridge.
+If no bootstrap output arrived, follow `docs/startup-troubleshooting.md` under the current installed package root now. Use ordinary permitted native tools to run `scripts/codex_compat.py --host-status --cwd PROJECT`; it reads package capabilities and native hook metadata without creating a chat or changing trust. Capabilities can be reported as package declarations even when activation is unverified. Do not simply declare them unavailable or tell the user to repeat start alone. Do not infer missing trust from missing context: recommend native hook review only when the host reports untrusted/modified hooks. Distinguish a stale version/link from a process failure. Use current installed skill metadata, not an old cache path quoted in the error; explain a one-time reload only if the chat is stale. Missing actual host identity still prevents owner enrollment.

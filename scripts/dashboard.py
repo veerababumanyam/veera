@@ -1,12 +1,18 @@
 """Loopback-only status server. No external assets, source files or log serving."""
 import json
+import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import secrets
 import threading
 import time
+import re
+import webbrowser
+from urllib.request import build_opener, ProxyHandler
 from urllib.parse import urlsplit
-from delivery import status, stop, TERMINAL, DeliveryError
+from delivery import status, stop, TERMINAL, DeliveryError, locked, atomic, storage
+from platform_runtime import file_lock
+import dashboard_documents
 
 
 PAGE = Path(__file__).resolve().parent.parent / 'web' / 'index.html'
@@ -41,8 +47,15 @@ def create_server(root, port=0):
             path = urlsplit(self.path).path.removeprefix('/' + token + '/')
             if path in ('', 'index.html'):
                 return self.reply(200, PAGE.read_bytes(), 'text/html; charset=utf-8')
-            if path in ('app.js', 'style.css'):
+            if path in ('app.js', 'documents.js', 'style.css'):
                 return self.reply(200, (PAGE.parent / path).read_bytes(), 'application/javascript' if path.endswith('.js') else 'text/css')
+            if path == 'health':
+                try:
+                    if status(root)['run_id'] != run_id:
+                        return self.reply(410, b'{"error":"run replaced"}')
+                    return self.reply(200, json.dumps({'run_id': run_id}).encode())
+                except (OSError, ValueError, KeyError, DeliveryError):
+                    return self.reply(503, b'{}')
             if path == 'status':
                 try:
                     state = status(root)
@@ -61,6 +74,17 @@ def create_server(root, port=0):
                     return self.reply(200, json.dumps(view).encode())
                 except (OSError, ValueError, KeyError, DeliveryError) as error:
                     return self.reply(503, json.dumps({'error': type(error).__name__}).encode())
+            if path == 'documents' or path.startswith('document/'):
+                try:
+                    state = status(root)
+                    if state['run_id'] != run_id:
+                        return self.reply(410, b'{"error":"run replaced"}')
+                    value = dashboard_documents.catalog() if path == 'documents' else dashboard_documents.document(path.removeprefix('document/'), state)
+                    return self.reply(200, json.dumps(value).encode())
+                except KeyError:
+                    return self.reply(404, b'{"error":"document not found"}')
+                except (OSError, ValueError, DeliveryError):
+                    return self.reply(503, b'{"error":"document unavailable"}')
             self.reply(404, b'{}')
 
         def do_POST(self):
@@ -81,10 +105,58 @@ def create_server(root, port=0):
     return server, f'http://127.0.0.1:{server.server_port}/{token}/'
 
 
-def serve(root, port=0):
+def info(root):
+    """Return only this run's validated, live URL; never discover other tasks."""
+    state = status(root)
+    with locked(root) as directory:
+        path = directory / 'dashboard.json'
+        result = {'status': 'not-started', 'dashboard_url': None, 'record_path': str(path)}
+        if not path.exists():
+            return result
+        record = json.loads(path.read_text(encoding='utf-8'))
+    if not isinstance(record, dict):
+        raise ValueError('Invalid saved dashboard record')
+    if record.get('run_id') != state['run_id']:
+        return {**result, 'status': 'stale'}
+    url = record.get('dashboard_url', '')
+    if not isinstance(url, str) or not re.fullmatch(r'http://127\.0\.0\.1:[0-9]{1,5}/[A-Za-z0-9_-]{43}/', url):
+        raise ValueError('Invalid saved dashboard address')
+    try:
+        with build_opener(ProxyHandler({})).open(url + 'health', timeout=1) as response:
+            live = json.loads(response.read(4096)).get('run_id') == state['run_id']
+    except (OSError, ValueError):
+        live = False
+    return {**result, 'status': 'running' if live else 'not-running',
+            'dashboard_url': url if live else None,
+            'browser_open_requested': record.get('browser_open_requested', False)}
+
+
+def serve(root, port=0, open_browser=True):
+    # One server per task; a repeated request reuses its existing address.
+    directory = storage(root)
+    try:
+        with file_lock(directory / 'dashboard-server.lock', blocking=False):
+            return _serve(root, port, open_browser)
+    except BlockingIOError:
+        existing = info(root)
+        if open_browser and existing['dashboard_url']:
+            try:
+                webbrowser.open(existing['dashboard_url'], new=2)
+            except Exception:
+                pass  # The validated URL remains the supported fallback.
+        print(json.dumps(existing), flush=True)
+
+
+def _serve(root, port=0, open_browser=True):
     status(root)  # Fail early rather than serve a broken dashboard.
     server, url = create_server(root, port)
-    print(json.dumps({'dashboard_url': url, 'binding': 'loopback', 'auto_shutdown': '60 seconds after terminal state'}), flush=True)
+    record = {'run_id': server.run_id, 'dashboard_url': url, 'pid': os.getpid(),
+              'started_at': time.time(), 'browser_open_requested': open_browser}
+    with locked(root) as directory:
+        atomic(directory / 'dashboard.json', record)
+    print(json.dumps({'dashboard_url': url, 'record_path': str(directory / 'dashboard.json'),
+                      'binding': 'loopback', 'browser_open_requested': open_browser,
+                      'auto_shutdown': '60 seconds after terminal state'}), flush=True)
 
     def monitor():
         terminal_since = None
@@ -105,6 +177,13 @@ def serve(root, port=0):
                 return
 
     threading.Thread(target=monitor, daemon=True).start()
+    if open_browser:
+        def open_view():
+            try:
+                webbrowser.open(url, new=2)
+            except Exception:
+                pass  # Headless hosts can open the printed URL through native UI tools.
+        threading.Thread(target=open_view, daemon=True).start()
     try:
         server.serve_forever()
     finally:
