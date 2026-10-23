@@ -20,8 +20,13 @@ def shell_words(command):
     words = list(lexer)
     # Canonicalize only the known controller path; preserve every other token.
     controller = Path(__file__).resolve().parent / 'delivery.py'
-    if len(words) > 1 and Path(words[1]).resolve() == controller:
-        words[1] = str(controller)
+    script_index = 2 if os.name == 'nt' and words[:1] == ['&'] else 1
+    if len(words) > script_index and Path(words[script_index]).resolve() == controller:
+        words[script_index] = str(controller)
+    # PowerShell uses & to invoke a quoted executable. Recognize it only for
+    # the exact controller, never as a general shell-chain exception.
+    if script_index == 2 and controller_command(words[1:]):
+        words = words[1:]
     return words
 
 
@@ -40,6 +45,8 @@ def scoped(name, scope):
     return implementation(name, scope)
 
 READ_ONLY = {'Read', 'Glob', 'Grep', 'ToolSearch', 'ListAgents'}
+CODEX_CHAT_RECOVERY = {'mcp__codex_app__read_thread', 'mcp__codex_app__wait_threads',
+                       'mcp__codex_app__send_message_to_thread'}
 DANGEROUS = re.compile(r'(?:\bgit\s+(?:push|reset\s+--hard|clean\s+-)|\brm\s+[^\n]*-[a-zA-Z]*[rf]|\bsudo\b|\bcurl\b.*\|\s*(?:ba)?sh|\b(?:npm|pnpm)\s+publish\b|\bkubectl\b|\bterraform\s+(?:apply|destroy)\b|\bchmod\s+777\b|\bDROP\s+(?:TABLE|DATABASE)\b)', re.I)
 
 
@@ -94,15 +101,32 @@ def evaluate(payload, *, cwd_is_execution_context=True):
         return 'Do not enumerate unrelated sessions; address only task agents by their recorded delegation IDs.'
     if tool == 'ToolSearch':
         return None
+    if os.environ.get('VEERA_HOST') == 'codex' and tool in CODEX_CHAT_RECOVERY:
+        # Communication remains subject to host/user authority. This neither
+        # transfers task ownership nor grants permission to resume execution.
+        return None
     if tool == 'Bash':
         raw_command = args.get('command', '')
         try:
             words = shell_words(raw_command)
         except ValueError:
             return 'Cannot validate malformed shell command.'
-        lexer = shlex.shlex(raw_command, posix=True, punctuation_chars=True)
+        parsed_command = raw_command
+        if os.name == 'nt' and raw_command.lstrip().startswith('&') and controller_command(words):
+            parsed_command = raw_command.lstrip()[1:]
+        lexer = shlex.shlex(parsed_command, posix=True, punctuation_chars=True)
         lexer.whitespace_split = True
         compound = any(t in (';', '&&', '||', '|', '&', '>', '>>', '<') for t in lexer) or '$(' in raw_command or '`' in raw_command or '\n' in raw_command
+        if os.environ.get('VEERA_HOST') == 'codex' and not compound and '$' not in raw_command:
+            # Deliberately small inspection grammar; arbitrary shell and tool
+            # wrappers remain execution, including commands named like reads.
+            if len(words) == 3 and words[:2] == ['Get-Content', '-LiteralPath'] and Path(words[2]).is_absolute():
+                return evaluate({**payload, 'tool_name': 'Read', 'tool_input': {'file_path': words[2]}},
+                                cwd_is_execution_context=cwd_is_execution_context)
+            if (len(words) in (4, 5) and words[:2] == ['git', '-C']
+                    and Path(words[2]).is_absolute() and Path(words[2]).resolve() == root
+                    and words[3] == 'status' and (len(words) == 4 or words[4] in ('--short', '--porcelain'))):
+                return None
         if compound and not native_policy:
             return 'ASK:Compound shell execution requires explicit confinement review'
         # Parse owner options in any order; never let duplicates hide approval rules.

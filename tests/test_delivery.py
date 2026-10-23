@@ -57,6 +57,16 @@ class DeliveryTests(unittest.TestCase):
         with self.assertRaises(d.DeliveryError):
             self.start()
 
+    def test_task_allowance_has_no_fixed_duration_cap(self):
+        state = self.start(minutes=600)
+        self.assertAlmostEqual(state['deadline'] - state['started_at'], 600 * 60)
+
+    def test_invalid_task_allowances_are_rejected_without_state(self):
+        for minutes in (True, 0, -1, float('nan'), float('inf')):
+            with self.subTest(minutes=minutes), self.assertRaises(d.DeliveryError):
+                d.init(self.root, 'fix', 'Fixture task', self.contract, minutes)
+            self.assertFalse((self.root / '.veera/state.json').exists())
+
     def test_zero_tests_fail(self):
         self.contract['checks'][0]['argv'][-1] = "print('Ran 0 tests')"
         self.start()

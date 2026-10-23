@@ -178,6 +178,12 @@ class GitDeliveryTests(unittest.TestCase):
         self.assertFalse(state['replan_required'])
         self.assertEqual(state['deadline'], deadline)
 
+    def test_task_specific_hard_allowance_has_no_fixed_cap(self):
+        self.start(minutes=600, hard_minutes=900)
+        state = d.status(self.root)
+        self.assertAlmostEqual(state['soft_deadline'] - state['started_at'], 600 * 60)
+        self.assertAlmostEqual(state['deadline'] - state['started_at'], 900 * 60)
+
     def test_hard_stop_preserves_main(self):
         self.start(minutes=.0001, hard_minutes=.0002)
         time.sleep(.03)
@@ -399,7 +405,7 @@ class GitDeliveryTests(unittest.TestCase):
         contract_path = self.root / '.veera-artifacts/contract.json'
         contract_path.parent.mkdir()
         contract_path.write_text(json.dumps(self.contract))
-        arguments = ('init', '--root', str(self.root), '--mode', 'fix', '--request', 'Correct value locally', '--contract', str(contract_path))
+        arguments = ('init', '--root', str(self.root), '--mode', 'fix', '--request', 'Correct value locally', '--contract', str(contract_path), '--minutes', '2', '--hard-minutes', '5')
         owner = self.session_id
         self.session_id = 'foreign-session'
         self.assertEqual(cli(self, *arguments).returncode, 2)

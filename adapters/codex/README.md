@@ -44,6 +44,10 @@ Missing bootstrap blocks the owned delivery controller, not independent host-aut
 
 Recover only the same bound task after reconciling its identity, checkpoint and current source. Recorded upfront authorization can cover eligible recovery, but cannot reset limits, bypass stale evidence, adopt another owner or erase a failed push attempt. The controller enforces those conditions.
 
+Stopped runs retain a narrow recovery path after exact owner validation. Use direct `Read`/`Glob`/`Grep` or native `read_file` with an absolute task path; standalone `Get-Content -LiteralPath "ABSOLUTE_TASK_FILE"` and `git -C "TASK" status [--short|--porcelain]` are also available. Controller `status`, checkpoint and recorded-authority recovery calls remain reachable, including Windows `& "PYTHON" "DELIVERY_SCRIPT" ...` invocations. Pass the host/data environment to the controller child as usual; environment-setting shell chains are not recovery exceptions.
+
+The native app's `read_thread`, `wait_threads` and `send_message_to_thread` tools remain available for an authorized handoff to a known task chat. Handoff is communication only: it does not transfer the owner, resume execution or renew time. User authorization to message another chat remains required. Arbitrary shell, opaque orchestration wrappers, unknown tools, source patches and Git worktree handoff remain blocked while stopped. Call the supported recovery tools directly; a wrapper containing a read is still arbitrary execution. Claude's approval behavior is unchanged.
+
 Legacy migration remains a separate owner operation using `scripts/ownership.py` with the actual session, owned root and one exact legacy record. Require old-owner quiescence, validated identity and exclusive target creation; preserve the original. Never scan sessions, bulk migrate, hand-build ownership or switch namespaces to evade an actual denial.
 
 ## Verification and installation

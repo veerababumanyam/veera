@@ -43,7 +43,10 @@ def handle(payload):
     # evidence of command location. File targets remain relative to chat cwd;
     # opaque tool effects stay governed by native policy, not a claimed sandbox.
     cwd_is_execution_context = False
-    if tool in ('exec_command', 'shell_command'):
+    if tool == 'read_file':
+        normalized['tool_name'] = 'Read'
+        normalized['tool_input'] = {'file_path': payload['tool_input'].get('path', '')}
+    elif tool in ('exec_command', 'shell_command'):
         raw = payload.get('tool_input', {})
         workdir = raw.get('workdir')
         try:

@@ -1,5 +1,7 @@
 ## 0.3.4 — 2026-10-23
 
+- Fix the Codex recovery guard affecting 0.3.3: keep scoped inspection, Windows controller status/recovery calls and authorized chat handoff reachable on stopped runs. Preserve exact ownership, native permissions, controller budget/repair checks and denial of arbitrary stopped-run execution.
+- Derive positive recovery allowances from authorized remaining-task estimates tied to frozen criteria, replacing the fixed 120-minute cap. Preserve zero-time resume, checkpoint validation and exhausted repair ceilings; no existing task is automatically renewed.
 - Add a DeepSeek Harness adapter (`adapters/dsh`) with five global skills (`veera-build`, `veera-fix`, `veera-start`, `veera-dashboard`, `veera-route`) and a `.dsh-plugin` manifest.
 - Teach the shared Python controller the `dsh` host: persistent routing resolves from `DSH_HOME` (default `~/.dsh`) in a separate `veera-v1/dsh/sessions` namespace, identity comes from `DSH_SESSION_ID`, and `bootstrap.py --dsh` provides the identity/setup diagnostic.
 - DSH skills resolve the package root from `$VEERA_ROOT` or the checkout, prefer `python`/`py` on Windows, and keep automatic local-verify delivery, ownership, frozen scope, evidence and publish gates unchanged.

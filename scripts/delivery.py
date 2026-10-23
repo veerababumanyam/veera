@@ -214,14 +214,14 @@ def validate_contract(contract, root):
 
 def init(root, mode, request, contract, minutes, hard_minutes=None):
     root = Path(root).resolve()
-    require(math.isfinite(minutes) and 0 < minutes <= 240, 'Budget must be >0 and <=240 minutes')
+    require(type(minutes) in (int, float) and math.isfinite(minutes * 60) and minutes > 0, 'Budget must be positive finite task-derived minutes')
     require(request.strip(), 'Request must not be empty')
     actual = subprocess.check_output(['git', '-C', str(root), 'rev-parse', '--show-toplevel'], text=True, timeout=10).strip()
     require(Path(actual).resolve() == root, 'Use the repository root')
     validate_contract(contract, root)
     require(contract.get('delivery_mode') != 'local-verify' or hard_minutes is not None, 'Local verification requires the v2 owned-worktree lifecycle')
     if hard_minutes is not None:
-        require(math.isfinite(hard_minutes) and minutes <= hard_minutes <= 480, 'Hard ceiling must cover soft target and be <=480 minutes')
+        require(type(hard_minutes) in (int, float) and math.isfinite(hard_minutes * 60) and hard_minutes >= minutes, 'Task hard ceiling must be finite and cover the soft target')
         from git_delivery import owned, release_policy, validate_inputs, git, clean
         metadata = owned(root)
         require(git(root, 'rev-parse', 'HEAD') == metadata['base'], 'Worktree HEAD changed before init; do not absorb unapproved commits into baseline')
@@ -517,7 +517,23 @@ def resume(root, report):
         require(saved['fingerprint'] == digest(snapshot(root)), 'Checkpoint source changed; inspect and record a new checkpoint')
         require(report.get('authorization') and report.get('reason'), 'Resume requires actual user authorization and resolved blocker evidence')
         extra = report.get('additional_minutes', 0)
-        require(isinstance(extra, (int, float)) and math.isfinite(extra) and 0 <= extra <= 120, 'Invalid explicit time allowance')
+        require(type(extra) in (int, float) and math.isfinite(extra * 60) and extra >= 0, 'Invalid explicit time allowance')
+        if extra:
+            plan = report.get('time_plan')
+            require(isinstance(plan, list) and plan, 'Positive allowance requires a task time_plan covered by user authorization')
+            criteria = {item['id'] for item in state['contract']['criteria']}
+            planned, estimates = set(), []
+            for item in plan:
+                require(isinstance(item, dict) and set(item) == {'id', 'criterion_id', 'minutes', 'reason'}, 'Invalid time_plan task fields')
+                require(isinstance(item['id'], str) and re.fullmatch(r'[A-Za-z0-9_-]{1,64}', item['id']) and item['id'] not in planned, 'Invalid or duplicate time_plan task ID')
+                require(isinstance(item['criterion_id'], str) and item['criterion_id'] in criteria, 'Time plan must reference frozen task criteria')
+                require(isinstance(item['reason'], str) and item['reason'].strip(), 'Time plan needs a task estimate reason')
+                estimate = item['minutes']
+                require(type(estimate) in (int, float) and math.isfinite(estimate) and estimate > 0, 'Invalid task time estimate')
+                planned.add(item['id'])
+                estimates.append(estimate)
+            total = sum(estimates)
+            require(math.isfinite(total) and math.isclose(extra, total, rel_tol=0, abs_tol=1e-9), 'Allowance must equal the authorized task estimates')
         if extra:
             state['deadline'] = max(time.time(), state['deadline']) + extra * 60
         require(state['deadline'] > time.time(), 'Hard budget exhausted; new user-authorized allowance is necessary')
@@ -624,8 +640,8 @@ def main():
             sub.add_argument('--mode', choices=['build', 'fix'], required=True)
             sub.add_argument('--request', required=True)
             sub.add_argument('--contract', required=True)
-            sub.add_argument('--minutes', type=float, default=30)
-            sub.add_argument('--hard-minutes', type=float, default=120)
+            sub.add_argument('--minutes', type=float, required=True, help='Remaining soft target derived from the authorized task plan')
+            sub.add_argument('--hard-minutes', type=float, required=True, help='Task-specific authorized remaining hard allowance')
         elif command == 'workspace':
             sub.add_argument('--task', required=True)
         elif command == 'phase':

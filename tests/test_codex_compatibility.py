@@ -131,6 +131,48 @@ class CodexCompatibilityTests(unittest.TestCase):
                 self.assertEqual(self.request('Bash', {'command': command}), {})
                 self.assertEqual(self.request('Bash', {'command': command + '; echo extra'})['hookSpecificOutput']['permissionDecision'], 'deny')
 
+    def test_exhausted_recovery_inspection_and_chat_handoff(self):
+        before = Path(self.capability).read_bytes()
+        with patch.object(safety, 'status', return_value={'status': 'budget-exhausted'}):
+            for tool, args in [
+                ('read_file', {'path': str(self.root / 'app.py')}),
+                ('Bash', {'command': f'Get-Content -LiteralPath "{self.root / "app.py"}"'}),
+                ('Bash', {'command': f'git -C "{self.root}" status --short'}),
+                ('mcp__codex_app__read_thread', {'threadId': 'recorded-task-chat'}),
+                ('mcp__codex_app__send_message_to_thread', {'threadId': 'recorded-task-chat', 'prompt': 'Checkpoint handoff'}),
+            ]:
+                with self.subTest(tool=tool, args=args):
+                    self.assertEqual(self.request(tool, args), {})
+        self.assertEqual(Path(self.capability).read_bytes(), before)
+
+    @unittest.skipUnless(os.name == 'nt', 'PowerShell call operator is Windows-only')
+    def test_windows_controller_call_operator_recovery(self):
+        command = (f'& "{Path(sys.executable).as_posix()}" "{(ROOT / "scripts/delivery.py").as_posix()}" status '
+                   f'--root "{self.root}" --session-id fixture-owner --capability-file "{self.capability}"')
+        with patch.object(safety, 'status', return_value={'status': 'budget-exhausted'}):
+            self.assertEqual(self.request('Bash', {'command': command}), {})
+            for bad in (command + '; echo extra', command + ' | cat', command + ' > state.json',
+                        command.replace('fixture-owner', 'foreign-owner'),
+                        command.replace(str(self.root), str(self.base / 'foreign'))):
+                self.assertEqual(self.request('Bash', {'command': bad})['hookSpecificOutput']['permissionDecision'], 'deny')
+
+    def test_exhausted_recovery_does_not_open_arbitrary_execution(self):
+        with patch.object(safety, 'status', return_value={'status': 'budget-exhausted'}):
+            for tool, args in [
+                ('read_file', {'path': str(self.base / 'foreign.txt')}),
+                ('Bash', {'command': f'Get-Content -LiteralPath "{self.base / "foreign.txt"}"'}),
+                ('Bash', {'command': f'Get-Content -LiteralPath "{self.root / "app.py"}"; echo extra'}),
+                ('Bash', {'command': f'git -C "{self.root}" reset --hard'}),
+                ('functions.exec', {'code': 'arbitrary()'}),
+                ('mcp__codex_app__handoff_thread', {'threadId': 'other'}),
+                ('mcp__unknown__read', {}),
+                ('Write', {'file_path': str(self.root / 'app.py')}),
+            ]:
+                with self.subTest(tool=tool, args=args):
+                    self.assertEqual(self.request(tool, args)['hookSpecificOutput']['permissionDecision'], 'deny')
+        (self.root / '.veera/workspace.json').write_text(json.dumps({'id': 'foreign', 'session_id': 'fixture-owner'}))
+        self.assertEqual(self.request('mcp__codex_app__read_thread', {'threadId': 'recorded-task-chat'})['hookSpecificOutput']['permissionDecision'], 'deny')
+
     def test_real_hook_child_uses_codex_namespace_and_keeps_denial(self):
         before = Path(self.capability).read_bytes()
         payload = {'hook_event_name': 'PreToolUse', 'session_id': 'fixture-owner',

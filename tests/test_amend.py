@@ -230,6 +230,49 @@ class AmendmentTests(unittest.TestCase):
                 d.resume(self.root, {'checkpoint_id': state['checkpoint']['id'], 'authorization': 'Fixture resume consent', 'reason': 'Fixture', 'additional_minutes': 0})
             self.assertEqual(amended, d.status(self.root))
 
+    def test_codex_exhausted_recovery_keeps_controller_budget_validation(self):
+        import codex_hook
+        self.enterContext(patch.dict(os.environ, {'VEERA_HOST': 'codex'}))
+        with d.locked(self.root) as directory:
+            state = d.load(directory)
+            state.update(status='budget-exhausted', deadline=1, repairs=1)
+            d.save(directory, state)
+        before = (self.root / '.veera/state.json').read_bytes()
+        owner = Path(self.capability).read_bytes()
+        report = {'checkpoint_id': state['checkpoint']['id'], 'authorization': 'Fixture user approval',
+                  'reason': 'Resolved fixture', 'additional_minutes': 150,
+                  'time_plan': [{'id': 'P1', 'criterion_id': 'C1', 'minutes': 60, 'reason': 'Remaining implementation'},
+                                {'id': 'P2', 'criterion_id': 'C1', 'minutes': 90, 'reason': 'Verification and review'}]}
+        artifacts = self.root / '.veera-artifacts'
+        artifacts.mkdir(exist_ok=True)
+        report_path = artifacts / 'resume.json'
+        prefix = '& ' if os.name == 'nt' else ''
+        command = (f'{prefix}"{Path(sys.executable)}" "{Path(d.__file__)}" resume '
+                   f'--root "{self.root}" --session-id {self.session_id} '
+                   f'--capability-file "{self.capability}" --file "{report_path}"')
+        payload = {'hook_event_name': 'PreToolUse', 'session_id': self.session_id,
+                   'cwd': str(self.root), 'tool_name': 'Bash', 'tool_input': {'command': command}}
+        for delta in ({'additional_minutes': 0}, {'additional_minutes': 151},
+                      {'authorization': ''}, {'checkpoint_id': 'stale'}, {'time_plan': []},
+                      {'additional_minutes': True}, {'additional_minutes': float('nan')},
+                      {'time_plan': [report['time_plan'][0], report['time_plan'][0]]},
+                      {'time_plan': [{**report['time_plan'][0], 'criterion_id': 'foreign'}]},
+                      {'time_plan': [{**report['time_plan'][0], 'minutes': -1}]},
+                      {'time_plan': [{**report['time_plan'][0], 'minutes': float('inf')}]},
+                      {'time_plan': [{**report['time_plan'][0], 'reason': ''}]}):
+            with self.subTest(delta=delta):
+                report_path.write_text(json.dumps({**report, **delta}))
+                self.assertEqual(codex_hook.handle(payload), {})
+                result = cli(self, 'resume', '--root', str(self.root), '--file', str(report_path))
+                self.assertEqual(result.returncode, 2)
+                self.assertEqual((self.root / '.veera/state.json').read_bytes(), before)
+        report_path.write_text(json.dumps(report))
+        self.assertEqual(cli(self, 'resume', '--root', str(self.root), '--file', str(report_path)).returncode, 0)
+        after = d.status(self.root)
+        self.assertEqual(after['repairs'], state['repairs'])
+        self.assertEqual(after['started_at'], state['started_at'])
+        self.assertEqual(Path(self.capability).read_bytes(), owner)
+
     def test_amend_requires_host_approval_on_stopped_task(self):
         for args in ('--file approval.json', '--file=approval.json'):
             command = f'python3 "{Path(d.__file__)}" amend --root "{self.root}" --session-id {self.session_id} --capability-file "{self.capability}" {args}'
