@@ -45,7 +45,8 @@ def scoped(name, scope):
     return implementation(name, scope)
 
 READ_ONLY = {'Read', 'Glob', 'Grep', 'ToolSearch', 'ListAgents'}
-CODEX_CHAT_RECOVERY = {'mcp__codex_app__read_thread', 'mcp__codex_app__wait_threads',
+CODEX_CHAT_RECOVERY = {'mcp__codex_app__list_threads', 'mcp__codex_app__list_projects',
+                       'mcp__codex_app__read_thread', 'mcp__codex_app__wait_threads',
                        'mcp__codex_app__send_message_to_thread'}
 DANGEROUS = re.compile(r'(?:\bgit\s+(?:push|reset\s+--hard|clean\s+-)|\brm\s+[^\n]*-[a-zA-Z]*[rf]|\bsudo\b|\bcurl\b.*\|\s*(?:ba)?sh|\b(?:npm|pnpm)\s+publish\b|\bkubectl\b|\bterraform\s+(?:apply|destroy)\b|\bchmod\s+777\b|\bDROP\s+(?:TABLE|DATABASE)\b)', re.I)
 

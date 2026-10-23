@@ -197,6 +197,22 @@ class CodexCompatibilityTests(unittest.TestCase):
             self.assertEqual(self.request('Bash', {'command': f'Get-Content -LiteralPath "{ROOT / "README.md"}"'}), {})
             self.assertEqual(self.request('apply_patch', {'command': f'*** Begin Patch\n*** Add File: {(self.root / ".veera-artifacts/resume.json").as_posix()}\n+{{}}\n*** End Patch'}), {})
 
+    def test_stopped_chat_discovery_preserves_owner_and_execution_boundaries(self):
+        owner_before = Path(self.capability).read_bytes()
+        state_before = (self.root / '.veera/state.json').read_bytes()
+        for status in safety.TERMINAL:
+            with self.subTest(status=status), patch.object(safety, 'status', return_value={'status': status}):
+                for tool in ('mcp__codex_app__list_threads', 'mcp__codex_app__list_projects'):
+                    self.assertEqual(self.detached_request(tool, {}), {})
+                for tool in ('mcp__codex_app__create_thread', 'mcp__codex_app__handoff_thread',
+                             'mcp__codex_app__unknown', 'ListAgents', 'functions.exec'):
+                    self.assertEqual(self.detached_request(tool, {})['hookSpecificOutput']['permissionDecision'], 'deny')
+        self.assertEqual(Path(self.capability).read_bytes(), owner_before)
+        self.assertEqual((self.root / '.veera/state.json').read_bytes(), state_before)
+        (self.root / '.veera/workspace.json').write_text(json.dumps({'id': 'foreign', 'session_id': 'fixture-owner'}))
+        for tool in ('mcp__codex_app__list_threads', 'mcp__codex_app__list_projects'):
+            self.assertEqual(self.detached_request(tool, {})['hookSpecificOutput']['permissionDecision'], 'deny')
+
     def test_controller_bootstrap_options_work_without_inherited_environment(self):
         state = {'status': 'budget-exhausted', 'contract': {}, 'contract_hash': delivery.digest({})}
         (self.root / '.veera/state.json').write_text(json.dumps(state))
