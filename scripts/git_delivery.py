@@ -262,7 +262,7 @@ def reconcile(root, reason):
         d.require(not state.get('push_attempted'), 'Cannot retry/reconcile automatically after a push attempt')
         d.require(state.get('release_prepared') and reason.strip(), 'Reconciliation needs a prepared release and new evidence')
         d.require(not state.get('running'), 'Check still running')
-        d.require(state['repairs'] < state['contract'].get('max_repairs', 3), 'Repair ceiling exhausted')
+        d.require(state['repairs'] < d.repair_limit(state), 'Repair ceiling exhausted')
         plan = state['release_prepared']
         path = Path(root) / plan['version_file']
         d.require(version_value(path)[0] == plan['version_to'], 'Version differs from prepared value; inspect before reconciliation')

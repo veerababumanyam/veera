@@ -42,6 +42,8 @@ Missing bootstrap blocks the owned delivery controller, not independent host-aut
 
 ## Recovery and migration
 
+Explicit additional global repair rounds use the separate owner-only [`extend-repairs` operation](../../docs/recovery-authorization.md). It preserves spent rounds and all per-piece limits, records the human authorization, and grants no time or automatic resume.
+
 Recover only the same bound task after reconciling its identity, checkpoint and current source. Recorded upfront authorization can cover eligible recovery, but cannot reset limits, bypass stale evidence, adopt another owner or erase a failed push attempt. The controller enforces those conditions.
 
 Stopped runs retain a narrow recovery path after exact owner validation. Use direct `Read`/`Glob`/`Grep` or native `read_file` with an absolute task path; standalone `Get-Content -LiteralPath "ABSOLUTE_TASK_FILE"` and `git -C "TASK" status [--short|--porcelain]` are also available. Controller `status`, checkpoint and recorded-authority recovery calls remain reachable, including Windows `& "PYTHON" "DELIVERY_SCRIPT" ...` invocations. Pass the host/data environment to the controller child as usual; environment-setting shell chains are not recovery exceptions.

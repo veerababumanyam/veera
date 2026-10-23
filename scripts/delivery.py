@@ -84,6 +84,55 @@ def load(directory):
     return state
 
 
+def repair_limit(state):
+    """Frozen base plus auditable, explicit grants; spent repairs never reset."""
+    limit = state['contract'].get('max_repairs', 3)
+    seen = set()
+    for grant in state.get('repair_extensions', []):
+        report = grant['report']
+        require(grant['prior_limit'] == limit and report['authorization_id'] not in seen,
+                'Invalid repair extension history')
+        extra = report['additional_repairs']
+        require(type(extra) is int and extra > 0 and grant['limit'] == limit + extra,
+                'Invalid repair extension allowance')
+        seen.add(report['authorization_id'])
+        limit = grant['limit']
+    return limit
+
+
+def recovery_identity(root, state, report):
+    require(state.get('version') == 2 and state['status'] in ('blocked', 'budget-exhausted', 'user-stopped'), 'Only stopped v2 work qualifies')
+    require(not state.get('running') and not state.get('push_attempted'), 'Reconcile running command/publication first')
+    require(state['root'] == str(Path(root).resolve()) and report['run_id'] == state['run_id'], 'Recovery run identity mismatch')
+    require(report['expected_contract_hash'] == state['contract_hash'], 'Expected contract hash is stale')
+    saved = state.get('checkpoint', {})
+    require(saved and saved['id'] == report['checkpoint_id'], 'Use the exact saved checkpoint')
+    require(saved['fingerprint'] == digest(snapshot(root)), 'Checkpoint source changed')
+
+
+def extend_repairs(root, report):
+    fields = {'run_id', 'checkpoint_id', 'expected_contract_hash', 'expected_limit', 'expected_repairs',
+              'additional_repairs', 'authorization_id', 'authorization', 'reason'}
+    require(isinstance(report, dict) and set(report) == fields, 'Use exact repair-extension report fields')
+    for key in fields - {'expected_limit', 'expected_repairs', 'additional_repairs'}:
+        require(isinstance(report[key], str) and report[key].strip(), 'Nonempty ' + key + ' required')
+    require(type(report['additional_repairs']) is int and report['additional_repairs'] > 0, 'Additional repairs must be a positive integer')
+    require(type(report['expected_limit']) is int and type(report['expected_repairs']) is int, 'Expected counters must be integers')
+    with locked(root) as directory:
+        state = load(directory)
+        recovery_identity(root, state, report)
+        limit = repair_limit(state)
+        require(report['expected_limit'] == limit and report['expected_repairs'] == state['repairs'], 'Repair allowance or spent count changed')
+        require(not any(g['report']['authorization_id'] == report['authorization_id'] for g in state.get('repair_extensions', [])), 'Authorization already applied')
+        grant = {'id': uuid.uuid4().hex, 'at': time.time(), 'prior_limit': limit,
+                 'limit': limit + report['additional_repairs'], 'repairs_used': state['repairs'], 'report': report}
+        state.setdefault('repair_extensions', []).append(grant)
+        state['review'] = None
+        event(state, 'extend-repairs', grant)
+        save(directory, state)
+        return state
+
+
 def expire(state):
     changed = False
     if state['status'] not in TERMINAL and state.get('soft_deadline') and time.time() >= state['soft_deadline'] and not state.get('soft_notified'):
@@ -278,7 +327,7 @@ def repair(root, reason):
         require(reason.strip(), 'Repair needs new evidence or a changed hypothesis')
         require(state['phase'] in ('verify', 'review'), 'Repair follows verification/review')
         require(not state.get('running'), 'A check is still running')
-        if state['repairs'] >= state['contract'].get('max_repairs', 3):
+        if state['repairs'] >= repair_limit(state):
             if state.get('version', 1) >= 2:
                 state['repair_escalation'] = True
                 event(state, 'escalation', 'Repair ceiling reached: record blocker and consult Advisor/Architect/PM; no reset or extra retry')
@@ -537,7 +586,7 @@ def resume(root, report):
         if extra:
             state['deadline'] = max(time.time(), state['deadline']) + extra * 60
         require(state['deadline'] > time.time(), 'Hard budget exhausted; new user-authorized allowance is necessary')
-        require(state['repairs'] < state['contract'].get('max_repairs', 3), 'Repair ceiling remains exhausted; resume cannot reset it')
+        require(state['repairs'] < repair_limit(state), 'Repair ceiling remains exhausted; resume cannot reset it')
         state['status'] = 'active'
         state['checks'] = {}
         state['review'] = None
@@ -630,7 +679,7 @@ def decision(root, report):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     subs = parser.add_subparsers(dest='command', required=True)
-    for command in ('init', 'status', 'phase', 'check', 'review', 'finish', 'stop', 'repair', 'decision', 'dashboard', 'dashboard-info', 'fingerprint', 'archive', 'workspace', 'release-prepare', 'publish', 'checkpoint', 'resume', 'amend', 'release-reconcile', 'context', 'context-import', 'context-item', 'blocker', 'blocker-human-resolve', 'unbind'):
+    for command in ('init', 'status', 'phase', 'check', 'review', 'finish', 'stop', 'repair', 'decision', 'dashboard', 'dashboard-info', 'fingerprint', 'archive', 'workspace', 'release-prepare', 'publish', 'checkpoint', 'resume', 'amend', 'extend-repairs', 'release-reconcile', 'context', 'context-import', 'context-item', 'blocker', 'blocker-human-resolve', 'unbind'):
         sub = subs.add_parser(command)
         sub.add_argument('--root', required=True, type=Path)
         sub.add_argument('--session-id', required=True)
@@ -650,7 +699,7 @@ def main():
             sub.add_argument('--name', choices=PHASES, required=True)
         elif command in ('check', 'context-item'):
             sub.add_argument('--id', required=True)
-        elif command in ('review', 'decision', 'resume', 'amend', 'context-import', 'blocker', 'blocker-human-resolve'):
+        elif command in ('review', 'decision', 'resume', 'amend', 'extend-repairs', 'context-import', 'blocker', 'blocker-human-resolve'):
             sub.add_argument('--file', required=True)
         elif command in ('stop', 'repair', 'checkpoint', 'release-reconcile'):
             sub.add_argument('--reason', required=True)
@@ -706,8 +755,8 @@ def main():
                 result = task_context.human_resolve(args.root, read_json(args.file))
             else:
                 result = task_context.blocker(args.root, read_json(args.file))
-        elif command in ('review', 'decision', 'resume', 'amend'):
-            result = globals()[command](args.root, read_json(args.file))
+        elif command in ('review', 'decision', 'resume', 'amend', 'extend-repairs'):
+            result = globals()[command.replace('-', '_')](args.root, read_json(args.file))
         elif command == 'release-reconcile':
             from git_delivery import reconcile
             result = reconcile(args.root, args.reason)

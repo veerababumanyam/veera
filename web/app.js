@@ -23,7 +23,8 @@ async function refresh() {
     if (run.replan_required) $('state').textContent += ' · Replanning required';
     $('phase').textContent = run.phase;
     $('budget').textContent = `${duration(run.now - run.started_at)} / ${duration(run.deadline - run.now)}`;
-    $('repairs').textContent = `${run.repairs} / ${run.contract.max_repairs ?? 3}`;
+    const repairLimit = (run.repair_extensions ?? []).reduce((limit, grant) => grant.limit, run.contract.max_repairs ?? 3);
+    $('repairs').textContent = `${run.repairs} / ${repairLimit}`;
     $('check-count').textContent = `${run.contract.checks.filter(c => run.checks[c.id]?.status === 'passed').length} / ${run.contract.checks.length}`;
     $('memory').textContent = `Shared memory revision ${run.memory_revision ?? 0}`;
     list('blockers', (run.blockers ?? []).map(b => `${b.id}: ${b.target} · ${b.status} · ${b.attempts}/${b.limit} attempts`), 'No blockers recorded.');

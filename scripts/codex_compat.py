@@ -15,7 +15,7 @@ def capabilities():
     return {
         'hook_ask': False,
         'extra_approval_gate': False,
-        'authority_recovery': {'amend': 'controller-validated', 'resume': 'controller-validated', 'blocker-human-resolve': 'controller-validated'},
+        'authority_recovery': {'amend': 'controller-validated', 'resume': 'controller-validated', 'extend-repairs': 'controller-validated', 'blocker-human-resolve': 'controller-validated'},
         'arbitrary_shell': 'host-policy',
         'canonical_bash_execution_cwd': 'not-exposed-by-host',
         'unknown_mutating_tools': 'host-policy',

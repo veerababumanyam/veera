@@ -156,7 +156,7 @@ def blocker(root, operation):
                 d.require(isinstance(criteria, list) and criteria and set(criteria) <= {c['id'] for c in state['contract']['criteria']}, 'Blocker must name existing criteria')
                 identity = 'B-' + uuid.uuid4().hex[:12]
                 record = {'id': identity, 'key': key, 'family': family, 'target': target, 'criteria': criteria, 'status': 'human-required' if family in HUMAN else 'open', 'limit': min(3, state['contract'].get('max_repairs', 3)), 'attempts': [], 'evidence': evidence}
-                if family not in HUMAN and (record['limit'] == 0 or state['repairs'] >= state['contract'].get('max_repairs', 3)):
+                if family not in HUMAN and (record['limit'] == 0 or state['repairs'] >= d.repair_limit(state)):
                     record['status'] = 'escalated'
                 blocks[identity] = record
         else:
@@ -165,7 +165,7 @@ def blocker(root, operation):
             if op == 'attempt':
                 d.require(record['family'] not in HUMAN, 'Human-only blockers cannot be retried by agents')
                 d.require(record['status'] == 'open', 'Preserve human-only, pending and reconciliation states; no corrective attempt eligible')
-                if state['repairs'] >= state['contract'].get('max_repairs', 3):
+                if state['repairs'] >= d.repair_limit(state):
                     record['status'] = 'escalated'
                     d.event(state, 'blocker-escalated', copy.deepcopy(record))
                     d.save(directory, state)
@@ -196,7 +196,7 @@ def blocker(root, operation):
                 d.require(refs != attempt.get('result_refs'), 'Reconciliation needs new observed-state evidence')
                 d.require(operation.get('outcome') in ('failed', 'candidate-fix'), 'Establish actual outcome before continuing')
                 attempt['reconciliation'] = {'outcome': operation['outcome'], 'evidence': refs, 'at': time.time()}
-                record['status'] = 'escalated' if len(record['attempts']) >= record['limit'] or state['repairs'] >= state['contract'].get('max_repairs', 3) else 'open'
+                record['status'] = 'escalated' if len(record['attempts']) >= record['limit'] or state['repairs'] >= d.repair_limit(state) else 'open'
             elif op == 'decision':
                 d.require(record['status'] == 'escalated', 'Decision follows exhausted technical attempts')
                 d.require(operation.get('owner') == 'pm' and {'advisor', 'architect'} <= set(operation.get('consulted', [])), 'PM decision requires Advisor and Architect consultation')
@@ -206,7 +206,7 @@ def blocker(root, operation):
                 d.require(choice in ('alternative', 'human-required', 'prioritize-independent'), 'Unknown escalation choice')
                 if choice == 'alternative':
                     d.require(not state.get('alternative'), 'Only one bounded alternative per task, never repeated reset cycles')
-                    d.require(state['repairs'] < state['contract'].get('max_repairs', 3), 'No remaining repair budget for another route')
+                    d.require(state['repairs'] < d.repair_limit(state), 'No remaining repair budget for another route')
                     state['alternative'] = {'blocker_id': record['id'], 'plan': plan, 'evidence': consultation, 'at': time.time(), 'deadline': state['deadline']}
                     record['status'] = 'alternative-selected'
                 elif choice == 'human-required':
