@@ -295,6 +295,8 @@ def validate_evidence(root, state):
     for spec in state['contract']['checks']:
         result = state['checks'].get(spec['id'], {})
         d.require(result.get('status') == 'passed' and result.get('fingerprint') == fingerprint, 'Missing or stale required release check')
+        import check_reporting
+        check_reporting.validate_result(root, state, spec, result, d.digest)
         for name, sha in result.get('artifacts', {}).items():
             path = (root / name).resolve()
             d.require(path.is_relative_to(root) and path.is_file() and d.hashlib.sha256(path.read_bytes()).hexdigest() == sha, 'Visual evidence changed after review')

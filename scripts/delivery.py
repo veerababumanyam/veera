@@ -133,6 +133,11 @@ def extend_repairs(root, report):
         return state
 
 
+def correct_check_reporting(root, report):
+    import check_reporting
+    return check_reporting.correct(root, report, sys.modules[__name__])
+
+
 def expire(state):
     changed = False
     if state['status'] not in TERMINAL and state.get('soft_deadline') and time.time() >= state['soft_deadline'] and not state.get('soft_notified'):
@@ -380,6 +385,10 @@ def check(root, check_id):
         previous = state['checks'].get(check_id)
         require(not (previous and previous['status'] == 'failed' and previous.get('repair_attempt') == state['repairs']), 'Failed check requires an explicit bounded repair before rerun')
         require(all(scoped(p, state['contract']['scope']) for p in changed(state, before)), 'Out-of-scope changes detected')
+        import check_reporting
+        correction = check_reporting.selected(state, spec, digest)
+        if correction:
+            check_reporting.validate(root, spec, correction['report']['adapter'])
         state['running'] = check_id
         event(state, 'check-start', check_id)
         save(directory, state)
@@ -455,6 +464,15 @@ def check(root, check_id):
             except ValueError:
                 count = 0
         artifacts = {}
+        if correction:
+            count = 0
+            try:
+                observation = check_reporting.validate(root, spec, correction['report']['adapter'])
+                if code == 0 and not why and before == after:
+                    count = observation['count']
+                    artifacts = observation['artifacts']
+            except (ValueError, OSError, KeyError, TypeError) as error:
+                why = why or 'reporting-evidence-invalid: ' + str(error)
         if spec['kind'] == 'visual':
             for name in spec['artifacts']:
                 path = (root / name).resolve()
@@ -462,6 +480,8 @@ def check(root, check_id):
                     artifacts[name] = hashlib.sha256(path.read_bytes()).hexdigest()
         passed = code == 0 and not why and before == after and (spec['kind'] != 'test' or bool(count and count > 0)) and (spec['kind'] != 'visual' or len(artifacts) == len(spec['artifacts']))
         result = {'id': check_id, 'repair_attempt': state['repairs'], 'status': 'passed' if passed else 'failed', 'argv': spec['argv'], 'exit_code': code, 'test_count': count, 'fingerprint': digest(before), 'elapsed_seconds': time.time() - started, 'reason': why or ('repository changed during check' if before != after else ''), 'log': log.name, 'artifacts': artifacts}
+        if correction:
+            result.update(count_source='verified-json-matrix', reporting_correction_id=correction['id'])
         state['checks'][check_id] = result
         state['running'] = None
         expire(state)
@@ -494,6 +514,8 @@ def finish(root):
         for spec in state['contract']['checks']:
             result = state['checks'].get(spec['id'], {})
             require(result.get('status') == 'passed' and result.get('fingerprint') == fingerprint, 'Missing, failed or stale check: ' + spec['id'])
+            import check_reporting
+            check_reporting.validate_result(root, state, spec, result, digest)
             for name, sha in result.get('artifacts', {}).items():
                 path = (Path(root) / name).resolve()
                 require(path.is_relative_to(Path(root).resolve()) and path.is_file() and hashlib.sha256(path.read_bytes()).hexdigest() == sha, 'Visual evidence changed')
@@ -679,7 +701,7 @@ def decision(root, report):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     subs = parser.add_subparsers(dest='command', required=True)
-    for command in ('init', 'status', 'phase', 'check', 'review', 'finish', 'stop', 'repair', 'decision', 'dashboard', 'dashboard-info', 'fingerprint', 'archive', 'workspace', 'release-prepare', 'publish', 'checkpoint', 'resume', 'amend', 'extend-repairs', 'release-reconcile', 'context', 'context-import', 'context-item', 'blocker', 'blocker-human-resolve', 'unbind'):
+    for command in ('init', 'status', 'phase', 'check', 'review', 'finish', 'stop', 'repair', 'decision', 'dashboard', 'dashboard-info', 'fingerprint', 'archive', 'workspace', 'release-prepare', 'publish', 'checkpoint', 'resume', 'amend', 'extend-repairs', 'correct-check-reporting', 'release-reconcile', 'context', 'context-import', 'context-item', 'blocker', 'blocker-human-resolve', 'unbind'):
         sub = subs.add_parser(command)
         sub.add_argument('--root', required=True, type=Path)
         sub.add_argument('--session-id', required=True)
@@ -699,7 +721,7 @@ def main():
             sub.add_argument('--name', choices=PHASES, required=True)
         elif command in ('check', 'context-item'):
             sub.add_argument('--id', required=True)
-        elif command in ('review', 'decision', 'resume', 'amend', 'extend-repairs', 'context-import', 'blocker', 'blocker-human-resolve'):
+        elif command in ('review', 'decision', 'resume', 'amend', 'extend-repairs', 'correct-check-reporting', 'context-import', 'blocker', 'blocker-human-resolve'):
             sub.add_argument('--file', required=True)
         elif command in ('stop', 'repair', 'checkpoint', 'release-reconcile'):
             sub.add_argument('--reason', required=True)
@@ -755,7 +777,7 @@ def main():
                 result = task_context.human_resolve(args.root, read_json(args.file))
             else:
                 result = task_context.blocker(args.root, read_json(args.file))
-        elif command in ('review', 'decision', 'resume', 'amend', 'extend-repairs'):
+        elif command in ('review', 'decision', 'resume', 'amend', 'extend-repairs', 'correct-check-reporting'):
             result = globals()[command.replace('-', '_')](args.root, read_json(args.file))
         elif command == 'release-reconcile':
             from git_delivery import reconcile
