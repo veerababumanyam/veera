@@ -104,7 +104,7 @@ class CodexCompatibilityTests(unittest.TestCase):
     def test_authorized_controller_operations_and_shell_use_native_policy(self):
         before = Path(self.capability).read_bytes()
         script = (ROOT / 'scripts/delivery.py').as_posix()
-        for operation in ('amend', 'resume', 'extend-repairs', 'correct-check-reporting', 'blocker-human-resolve'):
+        for operation in ('amend', 'resume', 'extend-repairs', 'correct-check-reporting', 'rebind-check-inputs', 'blocker-human-resolve'):
             command = f'python3 "{script}" {operation} --root "{self.root.as_posix()}" --file approval.json'
             for tool, args in (('Bash', {'command': command}), ('exec_command', {'cmd': command}), ('shell_command', {'command': command})):
                 with self.subTest(operation=operation, tool=tool):

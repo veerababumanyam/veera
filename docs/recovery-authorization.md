@@ -74,3 +74,58 @@ Object digests use the controller's existing `digest`: SHA-256 of Python `json.d
 The adapter expects a shared nonempty `campaign_id`, `results.live: true`, and a manifest with distinct nonempty `engines`, distinct positive integer `concurrencies`, and positive integer `repetitions`. The count is derived from their Cartesian product, with zero-based repetitions. Results must contain exactly one `runs` row per `(engine, concurrency, repetition)`, with no missing, duplicate or additional keys. This is a live-case count, not a fabricated stdout/unit-test count; there is no literal expected count in the report.
 
 The controller appends the complete authorization, review, prior check specification and failed result to `reporting_corrections`, retains the original log/events, and invalidates checks/review. The task stays stopped and its deadline, contract, counters, blockers and spend remain unchanged. Use the existing separately authorized resume path, then rerun every required check and obtain fresh final review. Check execution validates all pins before and after the unchanged command, and records the derived count only for exit 0 with complete capture and unchanged source. `finish` and publication revalidate the pins and correction receipt. Changed evidence, stale receipts or command failure cannot pass. Apply this to finalized campaign evidence: this command cannot silently rebind an already corrected check to new campaign files.
+
+
+## Rebinding a frozen check to a new campaign
+
+Use `rebind-check-inputs --root TASK --file REPORT.json` when historical campaign files must stay at their original paths and a finalized new campaign has permanent unique paths. Never archive-and-replace the old files, rewrite their embedded references, or reseal historical receipts. This command writes controller state only; it does not copy, move or rewrite any evidence file.
+
+Only the two values of the existing `--manifest` and `--results` arguments may change. The controller derives the new check; the report cannot provide a replacement command. Check ID, kind, Python executable/flags, verifier path, count pattern, timeout, scope, criteria and performance acceptance remain identical. The new evidence must be a complete matching live matrix, but the command does not declare it verified or infer a performance win. The original verifier must run against it after recovery.
+
+The owner prepares this exact report while active, then stops and uses the standalone recovery invocation:
+
+```json
+{
+  "run_id": "CURRENT_RUN",
+  "checkpoint_id": "CURRENT_CHECKPOINT",
+  "expected_contract_hash": "CURRENT_CONTRACT_HASH",
+  "check_id": "EXISTING_TEST_CHECK",
+  "expected_check_hash": "CURRENT_CHECK_OBJECT_DIGEST",
+  "expected_checks_hash": "CURRENT_STATE_CHECKS_OBJECT_DIGEST",
+  "authorization_id": "ACTUAL_HUMAN_MESSAGE_REFERENCE",
+  "authorization": "Actual authority for the necessary input-path update",
+  "reason": "Preserve historical campaign evidence at original paths",
+  "verifier": {"path": "bench/comparison/native_campaign.py", "sha256": "CURRENT_VERIFIER_FILE_HASH"},
+  "prior_inputs": {
+    "manifest": {"path": ".veera-artifacts/campaign-manifest.json", "sha256": "OLD_FILE_HASH"},
+    "results": {"path": ".veera-artifacts/campaign-results.json", "sha256": "OLD_FILE_HASH"}
+  },
+  "inputs": {
+    "manifest": {"path": ".veera-artifacts/final-campaign/manifest.json", "sha256": "NEW_FILE_HASH"},
+    "results": {"path": ".veera-artifacts/final-campaign/results.json", "sha256": "NEW_FILE_HASH"}
+  },
+  "review": {
+    "reviewer": "ACTUAL_SEPARATE_REVIEWER",
+    "notes": "Evidence-backed assessment of input provenance and unchanged acceptance",
+    "approved": true,
+    "fingerprint": "CURRENT_SOURCE_FINGERPRINT",
+    "prior_check_hash": "CURRENT_CHECK_OBJECT_DIGEST",
+    "new_check_hash": "DERIVED_NEW_CHECK_OBJECT_DIGEST",
+    "binding_hash": "BINDING_OBJECT_DIGEST"
+  }
+}
+```
+
+Use the object/file hashing conventions above. `expected_checks_hash` covers the entire current `state.checks` object. Derive the new check by deep-copying the old check and replacing only `argv[-3]` and `argv[-1]` with the new manifest/results paths. `binding_hash` covers exactly `{"verifier": report.verifier, "prior_inputs": report.prior_inputs, "inputs": report.inputs}`. The reviewer must assess these exact old/new specifications, source fingerprint and file pins, including the new campaign's own supervisor/build/raw-evidence provenance. Do not invent reviewer findings. The old input JSON bytes are pinned without trying to re-execute an obsolete historical build.
+
+Sequence:
+
+1. Finalize the new campaign at unique permanent paths. Preserve every old campaign file and receipt. Run the unchanged verifier directly against the new paths and retain its output as supplementary evidence; this does not satisfy the old frozen check.
+2. If the current controller result for this check is failed, record an explicit bounded repair after that failure. Remaining repair allowance is required; the rebinding operation does not spend, reset or extend counters.
+3. While active, checkpoint the current source, compute the report hashes and obtain the separate input-equivalence review. Stop without source or evidence changes, then invoke `rebind-check-inputs` with the normal owner/host arguments and no shell redirection.
+4. Resume using already authorized remaining time (zero additional minutes when the existing deadline suffices), handle the existing replan requirement, and run the rebound check. A missing stdout count still fails; rebinding does not apply the count adapter.
+5. For that fresh count-only failure, follow the separate bounded-repair, checkpoint, review and `correct-check-reporting` procedure above with the new paths. Resume, rerun all required checks and obtain fresh final review.
+
+The task must be stopped v2 work with an exact current checkpoint and no running check or push attempt. Stale identities/results/hashes, replayed authorization, malformed or reused paths, missing files, a reporting-corrected check, and exhausted repair allowance fail closed. This intentionally does not rebind a check after its counting correction: select finalized evidence first.
+
+Each `input_rebindings` receipt retains the complete prior contract/hash, prior/new check, new contract hash, prior checks/review, authorization, reviewer evidence and all file pins. The current contract hash changes because its two arguments change; all other contract fields remain identical. All checks/review invalidate. Status, checkpoint, deadlines, spent repairs, repair grants, blocker records and spend remain unchanged. Before and after fresh checks, and at finish/publication, the controller checks the new pins and all historical input pins at their original paths. A changed historical file blocks verification; an archive copy is not a replacement for the original reference. These checks preserve the input-file records, not a claim that obsolete historical binaries remain executable.

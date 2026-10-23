@@ -154,7 +154,7 @@ def evaluate(payload, *, cwd_is_execution_context=True):
         # Required approval is recognized independently of other argument order.
         script_path = str(Path(__file__).resolve().parent / 'delivery.py')
         if not compound and controller_command(words):
-            if words[2] in ('resume', 'amend', 'extend-repairs', 'correct-check-reporting', 'blocker-human-resolve'):
+            if words[2] in ('resume', 'amend', 'extend-repairs', 'correct-check-reporting', 'rebind-check-inputs', 'blocker-human-resolve'):
                 if native_policy:
                     return None  # Controller validates identity, recorded user intent and state.
                 return 'ASK:Explicit user approval is required for this authority-sensitive recovery operation'
