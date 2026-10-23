@@ -185,6 +185,36 @@ class CodexCompatibilityTests(unittest.TestCase):
         self.assertEqual(json.loads(result.stdout)['hookSpecificOutput']['permissionDecision'], 'deny')
         self.assertEqual(Path(self.capability).read_bytes(), before)
 
+    def test_stopped_controller_can_receive_exact_bootstrap_environment(self):
+        base = (f'"{Path(sys.executable)}" "{ROOT / "scripts/delivery.py"}" status '
+                f'--root "{self.root}" --session-id fixture-owner --capability-file "{self.capability}"')
+        flags = f' --host codex --plugin-data "{self.base / "data"}"'
+        with patch.object(safety, 'status', return_value={'status': 'budget-exhausted'}):
+            self.assertEqual(self.request('Bash', {'command': base + flags}), {})
+            for invalid in (flags.replace('codex', 'claude'), flags.replace(str(self.base / 'data'), str(self.base / 'foreign')),
+                            flags + ' --host codex', flags + '; echo extra'):
+                self.assertEqual(self.request('Bash', {'command': base + invalid})['hookSpecificOutput']['permissionDecision'], 'deny')
+            self.assertEqual(self.request('Bash', {'command': f'Get-Content -LiteralPath "{ROOT / "README.md"}"'}), {})
+            self.assertEqual(self.request('apply_patch', {'command': f'*** Begin Patch\n*** Add File: {(self.root / ".veera-artifacts/resume.json").as_posix()}\n+{{}}\n*** End Patch'}), {})
+
+    def test_controller_bootstrap_options_work_without_inherited_environment(self):
+        state = {'status': 'budget-exhausted', 'contract': {}, 'contract_hash': delivery.digest({})}
+        (self.root / '.veera/state.json').write_text(json.dumps(state))
+        before = Path(self.capability).read_bytes()
+        env = dict(os.environ)
+        env.pop('VEERA_HOST', None)
+        env.pop('CLAUDE_PLUGIN_DATA', None)
+        args = [sys.executable, str(ROOT / 'scripts/delivery.py'), 'status', '--root', str(self.root),
+                '--session-id', 'fixture-owner', '--capability-file', self.capability,
+                '--host', 'codex', '--plugin-data', str(self.base / 'data')]
+        result = subprocess.run(args, env=env, capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertEqual(json.loads(result.stdout)['status'], 'budget-exhausted')
+        for bad_env in (dict(env, VEERA_HOST='claude'), dict(env, CLAUDE_PLUGIN_DATA=str(self.base / 'foreign'))):
+            denied = subprocess.run(args, env=bad_env, capture_output=True, text=True, timeout=10)
+            self.assertEqual(denied.returncode, 2)
+        self.assertEqual(Path(self.capability).read_bytes(), before)
+
     def test_real_bootstrap_discloses_limits_without_enrollment(self):
         data = self.base / 'bootstrap-data'
         payload = {'hook_event_name': 'UserPromptSubmit', 'session_id': 'fixture-bootstrap',

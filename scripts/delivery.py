@@ -634,6 +634,8 @@ def main():
         sub = subs.add_parser(command)
         sub.add_argument('--root', required=True, type=Path)
         sub.add_argument('--session-id', required=True)
+        sub.add_argument('--host', choices=['codex'], help='Actual bootstrap host when the child cannot inherit its environment')
+        sub.add_argument('--plugin-data', type=Path, help='Actual absolute bootstrap plugin_data; requires --host')
         if command != 'workspace':
             sub.add_argument('--capability-file', required=True)
         if command == 'init':
@@ -661,6 +663,15 @@ def main():
         command = args.command
         if command != 'doctor':
             import ownership
+            if args.host is not None or args.plugin_data is not None:
+                require(args.host == 'codex' and args.plugin_data is not None and args.plugin_data.is_absolute(), 'Pass both actual --host codex and absolute --plugin-data')
+                require(os.environ.get('VEERA_HOST') in (None, '', args.host), 'Explicit host conflicts with inherited host')
+                inherited_data = os.environ.get('CLAUDE_PLUGIN_DATA')
+                require(not inherited_data or Path(inherited_data).resolve() == args.plugin_data.resolve(), 'Explicit plugin data conflicts with inherited data')
+                # Child-local environment only; exact capability authorization
+                # below still validates the caller, root and persistent record.
+                os.environ['VEERA_HOST'] = args.host
+                os.environ['CLAUDE_PLUGIN_DATA'] = str(args.plugin_data)
             if command == 'workspace':
                 require(ownership.lookup(args.session_id) is None, 'Session already bound; do not overwrite its task')
             else:

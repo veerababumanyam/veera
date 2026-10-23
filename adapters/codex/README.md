@@ -50,6 +50,8 @@ The native app's `read_thread`, `wait_threads` and `send_message_to_thread` tool
 
 Legacy migration remains a separate owner operation using `scripts/ownership.py` with the actual session, owned root and one exact legacy record. Require old-owner quiescence, validated identity and exclusive target creation; preserve the original. Never scan sessions, bulk migrate, hand-build ownership or switch namespaces to evade an actual denial.
 
+If the execution tool cannot pass environment variables, append `--host codex --plugin-data "BOOTSTRAP_PLUGIN_DATA"` to the standalone controller command, alongside your existing session/capability arguments. Both values must come from the actual bootstrap. The hook checks them against its own environment; the controller rejects conflicting inherited values and then performs normal capability authorization. This sets only the controller child's environment. For example: `& "PYTHON" "DELIVERY_SCRIPT" status --root "TASK" --session-id "SESSION" --capability-file "CAPABILITY" --host codex --plugin-data "BOOTSTRAP_PLUGIN_DATA"`. Use direct `apply_patch` with an absolute target under `TASK/.veera-artifacts/` to create amendment/resume reports while stopped; do not use shell chains or edit `.veera` state.
+
 ## Verification and installation
 
 The diagnostic reports package presence and declared capabilities, not hook trust or live activation. Verify the installed candidate in the actual host after its normal update/reload process. Preserve native permissions and existing owner data. Tests use isolated fixtures; they do not establish autonomous production delivery or authenticate specialist behavior.

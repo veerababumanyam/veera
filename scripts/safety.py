@@ -85,6 +85,7 @@ def evaluate(payload, *, cwd_is_execution_context=True):
         path = (cwd / target).resolve()
         plugin = Path(__file__).resolve().parents[1]
         plugin_docs = (path.is_relative_to(plugin / 'docs') or path.is_relative_to(plugin / 'agents')
+                       or path == plugin / 'README.md'
                        or path.is_relative_to(plugin / 'skills')
                        or path == plugin / 'adapters/codex/README.md'
                        or path.is_relative_to(plugin / 'adapters/codex/skills'))
@@ -130,7 +131,10 @@ def evaluate(payload, *, cwd_is_execution_context=True):
         if compound and not native_policy:
             return 'ASK:Compound shell execution requires explicit confinement review'
         # Parse owner options in any order; never let duplicates hide approval rules.
-        for flag, expected in (('--session-id', session_id), ('--capability-file', str(capability))):
+        owner_options = [('--session-id', session_id), ('--capability-file', str(capability))]
+        if os.environ.get('VEERA_HOST') == 'codex':
+            owner_options += [('--host', 'codex'), ('--plugin-data', os.environ.get('CLAUDE_PLUGIN_DATA', ''))]
+        for flag, expected in owner_options:
             positions = [i for i, word in enumerate(words) if word == flag or word.startswith(flag + '=')]
             if len(positions) > 1:
                 return 'Duplicate owner options are not allowed.'
@@ -144,7 +148,7 @@ def evaluate(payload, *, cwd_is_execution_context=True):
                         return 'Missing owner option value.'
                     value = words[i + 1]
                     del words[i:i + 2]
-                if (Path(value).resolve() != Path(expected).resolve() if flag == '--capability-file' else value != expected):
+                if not expected or (Path(value).resolve() != Path(expected).resolve() if flag in ('--capability-file', '--plugin-data') else value != expected):
                     return 'Controller identity does not match the calling host session.'
         # Required approval is recognized independently of other argument order.
         script_path = str(Path(__file__).resolve().parent / 'delivery.py')
