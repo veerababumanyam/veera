@@ -1,3 +1,9 @@
+## Unreleased
+
+- `workspace` no longer requires a clean, committed checkout on the default branch. It starts the task from the checkout as it is: the current branch or detached HEAD, plus uncommitted source work (staged, unstaged, untracked, deleted, renamed) as an unpublished snapshot commit built through a private index. The original checkout's files, index, refs and stash are untouched, tool state and ignored files stay behind, and the task diff stays exactly the task's own change.
+- Only states with no single starting content refuse, each naming its cause: an unfinished merge, rebase, cherry-pick, revert or bisect, conflicted paths, or a repository without commits. An unclear default branch no longer refuses.
+- Publication keeps its guarantee in one place: `init`, `release-prepare` and `publish` refuse a publishing task whose base is a snapshot or that started off the default branch tip. Partial-enrollment recovery matches the recorded start and no longer requires the original checkout to be clean.
+
 ## 0.3.4 — 2026-10-23
 
 - Fix the Codex recovery guard affecting 0.3.3: keep scoped inspection, Windows controller status/recovery calls and authorized chat handoff reachable on stopped runs. Preserve exact ownership, native permissions, controller budget/repair checks and denial of arbitrary stopped-run execution.

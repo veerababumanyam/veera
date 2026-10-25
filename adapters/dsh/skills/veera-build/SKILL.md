@@ -25,7 +25,7 @@ Under the package root, read `docs/automatic-entry.md`, `adapters/dsh/README.md`
 
 Only the coordinator runs the controller; never share the capability file. Pass `--session-id <session_id> --capability-file <capability_file>` on every command after `workspace`.
 
-1. Discover first: inspect the request, any written spec and the code on the impact path; resolve essential questions in one upfront interview (zero when the spec and code answer them). Confirm the original is a clean committed Git root with `main` checked out.
+1. Discover first: inspect the request, any written spec and the code on the impact path; resolve essential questions in one upfront interview (zero when the spec and code answer them). Confirm the original is the authorized Git root. Local tasks may snapshot uncommitted work on any branch without changing the original; finish in-progress Git operations first. Publication requires a clean checkout at the default branch tip.
 2. Create the owned worktree and enroll the session:
    `python scripts/delivery.py workspace --root <repo-root> --task <slug> --session-id <session_id>`
    The result returns the new worktree `root` and the owner `capability_file`. Work only in that worktree.

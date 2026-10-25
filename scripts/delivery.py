@@ -306,12 +306,13 @@ def init(root, mode, request, contract, minutes, hard_minutes=None):
     require(contract.get('delivery_mode') != 'local-verify' or hard_minutes is not None, 'Local verification requires the v2 owned-worktree lifecycle')
     if hard_minutes is not None:
         require(type(hard_minutes) in (int, float) and math.isfinite(hard_minutes * 60) and hard_minutes >= minutes, 'Task hard ceiling must be finite and cover the soft target')
-        from git_delivery import owned, release_policy, validate_inputs, git, clean
+        from git_delivery import owned, release_policy, validate_inputs, git, clean, publishable
         metadata = owned(root)
         require(git(root, 'rev-parse', 'HEAD') == metadata['base'], 'Worktree HEAD changed before init; do not absorb unapproved commits into baseline')
         clean(root)
         if contract.get('delivery_mode', 'publish') == 'publish':
             release_policy({'contract': contract})
+            publishable(metadata)
         validate_inputs(root, contract['scope'])
     with locked(root) as directory:
         require(not (directory / 'state.json').exists(), 'Run already exists; budget cannot be reset by init')

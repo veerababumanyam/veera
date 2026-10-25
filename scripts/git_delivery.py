@@ -8,14 +8,15 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import tempfile
 import time
 import uuid
 
 import delivery as d
 
 
-def git(root, *args, timeout=30):
-    result = subprocess.run(['git', '-C', str(root), *args], capture_output=True, text=True, timeout=timeout)
+def git(root, *args, timeout=30, env=None):
+    result = subprocess.run(['git', '-C', str(root), *args], capture_output=True, text=True, timeout=timeout, env=env)
     d.require(result.returncode == 0, 'Git operation failed: ' + ' '.join(args[:2]) + '\n' + result.stderr[:2000])
     return result.stdout.strip()
 
@@ -54,30 +55,49 @@ def tool_state(root, kind, name):
     return len(counts) >= 2 and counts[0].isdigit() and counts[1] == '0'
 
 
-def leftovers(root):
-    """Return tolerated tool-state paths; refuse any other uncommitted change."""
+def inventory(root):
+    """Sort uncommitted paths into tool state, user work and paths no snapshot holds.
+
+    Returns (tolerated, work, held, unmerged). Work is every source change a
+    person or peer left in the checkout, including renames' source paths. Held
+    paths are submodules, whose uncommitted state no commit captures; unmerged
+    paths are conflicts with no single content.
+    """
     # Exclude only reserved untracked task bookkeeping via per-command pathspecs.
     # Never edit shared ignore/configuration files to hide it from other sessions.
     tracked = git(root, 'ls-files', '--', '.veera', '.veera-artifacts')
     d.require(not tracked, 'Reserved task-state paths must not contain tracked source')
     output = git(root, 'status', '--porcelain=v2', '-z', '--untracked-files=normal', '--', '.', ':(exclude).veera', ':(exclude).veera-artifacts')
     records = iter(output.split('\0'))
-    tolerated, blocking = [], []
+    tolerated, work, held, unmerged = [], [], [], []
     for record in records:
         if not record:
             continue
         if record.startswith('? '):
-            name, kind = record[2:], 'untracked'
+            name = record[2:]
+            (tolerated if tool_state(root, 'untracked', name) else work).append(name)
+            continue
+        fields = record.split(' ', {'1': 8, '2': 9, 'u': 10}.get(record[0], 1))
+        name = fields[-1]
+        if record[0] not in '12':
+            unmerged.append(name)
+        elif fields[2] != 'N...':
+            held.append(name)
+        elif record[0] == '1' and set(fields[1]) <= {'.', 'M'} and tool_state(root, 'tracked', name):
+            tolerated.append(name)
         else:
-            fields = record.split(' ', {'1': 8, '2': 9, 'u': 10}.get(record[0], 1))
-            if record.startswith('2 '):
-                next(records, None)  # Rename source path.
-            name, kind = fields[-1], 'tracked'
-            # Only a plain worktree/index modification of a non-submodule file qualifies.
-            if not (record.startswith('1 ') and set(fields[1]) <= {'.', 'M'} and fields[2] == 'N...'):
-                blocking.append(name)
-                continue
-        (tolerated if tool_state(root, kind, name) else blocking).append(name)
+            work.append(name)
+        if record[0] == '2':
+            source = next(records, None)
+            if source and fields[2] == 'N...':
+                work.append(source)
+    return tolerated, work, held, unmerged
+
+
+def leftovers(root):
+    """Return tolerated tool-state paths; refuse any other uncommitted change."""
+    tolerated, work, held, unmerged = inventory(root)
+    blocking = unmerged + work + held
     d.require(not blocking, 'Checkout contains uncommitted changes; preserve them and resolve ownership first: ' + ', '.join(blocking[:20]))
     return tolerated
 
@@ -86,8 +106,18 @@ def clean(root):
     leftovers(root)
 
 
+IN_PROGRESS = (('MERGE_HEAD', 'merge'), ('rebase-merge', 'rebase'), ('rebase-apply', 'rebase or am'),
+               ('CHERRY_PICK_HEAD', 'cherry-pick'), ('REVERT_HEAD', 'revert'), ('BISECT_LOG', 'bisect'))
+
+
+def operation_in_progress(root):
+    """Name an unfinished merge, rebase, cherry-pick, revert or bisect, or None."""
+    paths = git(root, 'rev-parse', '--path-format=absolute', *[arg for name, _ in IN_PROGRESS for arg in ('--git-path', name)]).splitlines()
+    return next((label for path, (_, label) in zip(paths, IN_PROGRESS) if Path(path).exists()), None)
+
+
 def default_branch(root):
-    """Name the default branch the checkout is on, whatever it is called."""
+    """Name the repository's default branch whatever it is called, or None when unclear."""
     heads = set(git(root, 'for-each-ref', '--format=%(refname:short)', 'refs/heads').splitlines())
     remote = subprocess.run(['git', '-C', str(root), 'symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD'], capture_output=True, text=True, timeout=30)
     name = remote.stdout.strip().partition('/')[2] if remote.returncode == 0 else ''
@@ -99,8 +129,45 @@ def default_branch(root):
     named = [name for name in DEFAULT_BRANCHES if name in heads]
     if len(named) == 1:
         return named[0]
-    d.require(len(heads) == 1, 'Cannot identify the default branch; check out main, master or trunk')
-    return heads.pop()
+    return heads.pop() if len(heads) == 1 else None
+
+
+# A fixed identity for snapshot commits, so no Git identity needs configuring.
+SNAPSHOT_IDENTITY = {'GIT_AUTHOR_NAME': 'Veera', 'GIT_AUTHOR_EMAIL': 'veera@localhost',
+                     'GIT_COMMITTER_NAME': 'Veera', 'GIT_COMMITTER_EMAIL': 'veera@localhost'}
+
+
+def snapshot_commit(root, head, paths):
+    """Commit the checkout's uncommitted work without touching its index, files or refs.
+
+    A private index starts from HEAD and stages only the listed working-tree
+    paths, so tool state and ignored files stay behind. The commit is
+    unreferenced until the task branch points at it. Returns head itself when
+    the listed paths add up to no change.
+    """
+    folder = tempfile.mkdtemp(prefix='veera-snapshot-')
+    try:
+        env = {**os.environ, **SNAPSHOT_IDENTITY, 'GIT_INDEX_FILE': os.path.join(folder, 'index'), 'GIT_LITERAL_PATHSPECS': '1'}
+        spec = Path(folder) / 'paths'
+        spec.write_bytes(b'\0'.join(name.encode('utf-8') for name in paths))
+        git(root, 'read-tree', head, env=env)
+        git(root, 'add', '-A', '--pathspec-from-file=' + str(spec), '--pathspec-file-nul', env=env, timeout=300)
+        tree = git(root, 'write-tree', env=env)
+        if tree == git(root, 'rev-parse', head + '^{tree}'):
+            return head
+        message = 'Veera snapshot of uncommitted work in ' + root.name + '\n\nThe task starts from this state; it is never published.'
+        return git(root, 'commit-tree', tree, '-p', head, '-m', message, env=env)
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)
+
+
+def publishable(metadata):
+    """Publication ships the task branch, so the task must start at the default branch alone."""
+    d.require(not metadata.get('snapshot_paths'), 'Publication needs a task started from a clean checkout: this task starts from a snapshot of '
+              + str(len(metadata.get('snapshot_paths', []))) + ' uncommitted path(s) in the original checkout, which publishing would ship. '
+              'Use delivery_mode local-verify, or commit that work deliberately and start a new task')
+    d.require(metadata.get('on_default', True), 'Publication needs a task started at the default branch tip: this task started from '
+              + (metadata.get('start_branch') or 'a detached HEAD') + ', whose own commits publishing would ship. Use delivery_mode local-verify, or start from the default branch')
 
 
 def present(path):
@@ -209,12 +276,22 @@ def workspace(root, task, session_id=None):
         target, branch, existing = destination(root, task, session_id)
         if existing:
             return recover_workspace(root, target, branch, session_id)
-        left = leftovers(root)
+        # The checkout is read, never cleaned: the task starts from exactly what it
+        # holds now. Only states with no single meaning to start from refuse.
+        operation = operation_in_progress(root)
+        d.require(operation is None, 'A ' + str(operation) + ' is in progress in the original checkout; finish or abort it there, then start the task')
+        d.require(subprocess.run(['git', '-C', str(root), 'rev-parse', '--verify', '--quiet', 'HEAD'], capture_output=True, timeout=30).returncode == 0,
+                  'The repository has no commits yet; make a first commit, then start the task')
+        left, work, held, unmerged = inventory(root)
+        d.require(not unmerged, 'Conflicted paths in the original checkout have no single content to start from; resolve them first: ' + ', '.join(unmerged[:20]))
+        head = git(root, 'rev-parse', 'HEAD')
         default = default_branch(root)
-        base = git(root, 'rev-parse', 'refs/heads/' + default)
-        d.require(git(root, 'rev-parse', 'HEAD') == base, 'Start from ' + default + ' or a branch at exactly ' + default + '; unrelated topic commits must not enter the task')
+        on_default = default is not None and head == git(root, 'rev-parse', 'refs/heads/' + default)
+        base = snapshot_commit(root, head, work) if work else head
         git(root, 'worktree', 'add', '-b', branch, str(target), base)
-        metadata = {'id': uuid.uuid4().hex, 'root': str(target), 'original': str(root), 'branch': branch, 'base': base, 'common': str(common(root)), 'created_at': time.time()}
+        metadata = {'id': uuid.uuid4().hex, 'root': str(target), 'original': str(root), 'branch': branch, 'base': base, 'head': head,
+                    'start_branch': git(root, 'branch', '--show-current') or None, 'on_default': on_default,
+                    'snapshot_paths': work if base != head else [], 'common': str(common(root)), 'created_at': time.time()}
         metadata['session_id'] = session_id
         metadata['carried'], skipped = carry_generated(root, target)
         d.atomic(d.storage(target) / 'workspace.json', metadata)
@@ -222,9 +299,16 @@ def workspace(root, task, session_id=None):
             import ownership
             metadata['capability_file'] = ownership.enroll(session_id, target, metadata['id'])
         # Reported, not persisted: tool output stays in the original checkout.
-        # The full carried list stays in workspace.json; every later turn re-reads
-        # this output, so it names at most 20 files and one short next step.
-        return {**metadata, 'carried': metadata['carried'][:20], 'carried_count': len(metadata['carried']), 'base_branch': default, 'left_in_original': left[:20], 'carry_skipped': skipped[:20], 'next': next_step(target)}
+        # Full lists stay in workspace.json; every later turn re-reads this
+        # output, so it names at most 20 files per list and one short next step.
+        result = {**metadata, 'carried': metadata['carried'][:20], 'carried_count': len(metadata['carried']), 'snapshot_paths': metadata['snapshot_paths'][:20],
+                  'snapshot_count': len(metadata['snapshot_paths']), 'base_branch': default, 'left_in_original': left[:20], 'carry_skipped': skipped[:20], 'next': next_step(target)}
+        if held:
+            result['not_carried'] = held[:20]  # Submodule state no commit holds.
+        if base != head:
+            result['snapshot'] = ('The task starts from the original checkout as it is, uncommitted work included (commit ' + base[:12]
+                                  + ', never published). The task change is exactly what git diff shows in TASK, so it applies onto the original checkout unchanged.')
+        return result
 
 
 def next_step(target):
@@ -258,12 +342,16 @@ def recover_workspace(root, target, branch, session_id):
     d.require(git(target, 'branch', '--show-current') == branch, 'Partial workspace branch changed')
     base = metadata['base']
     d.require(git(target, 'rev-parse', 'HEAD') == base and git(root, 'rev-parse', 'refs/heads/' + branch) == base, 'Partial workspace HEAD or branch ref changed')
-    d.require(git(root, 'rev-parse', 'HEAD') == base, 'Original checkout moved from recorded workspace base')
+    # A snapshot base sits one commit above the original HEAD it was taken from.
+    head = metadata.get('head', base)
+    d.require(isinstance(head, str) and re.fullmatch(r'[0-9a-f]{40,64}', head), 'Invalid recorded workspace start')
+    d.require(base == head or git(root, 'rev-parse', base + '^') == head, 'Recorded snapshot base does not descend from the recorded start')
+    d.require(git(root, 'rev-parse', 'HEAD') == head, 'Original checkout moved from recorded workspace base')
     # Git's registration must independently identify this same path, ref and HEAD.
     records = git(root, 'worktree', 'list', '--porcelain', '-z').split('\0\0')
     expected = {'worktree ' + target.as_posix(), 'HEAD ' + base, 'branch refs/heads/' + branch}
     d.require(any(expected <= set(record.split('\0')) for record in records), 'Partial workspace registration differs')
-    clean(root)
+    # The original's uncommitted work is its owner's; only the task must be untouched.
     clean(target)
     d.require(ownership.lookup(session_id) is None, 'Session already bound; recovery cannot replace a binding')
     capability = ownership.enroll(session_id, target, metadata['id'])
@@ -388,8 +476,9 @@ def prepare(root):
         d.expire(state)
         d.save(directory, state)
         d.active(state)
-        owned(root)
+        metadata = owned(root)
         policy = release_policy(state)
+        publishable(metadata)
         d.require(not state.get('running'), 'Check still running')
         d.require(state['phase'] == 'implement', 'Prepare release after implementation, before final verification')
         if state.get('release_prepared'):
@@ -491,8 +580,9 @@ def publish(root):
         d.expire(state)
         d.save(directory, state)
         d.active(state)
-        owned(root)
+        metadata = owned(root)
         policy = release_policy(state)
+        publishable(metadata)
         d.require(state['status'] == 'ready' and state.get('release_prepared'), 'Publish requires final verified ready state')
         d.require(not state.get('push_attempted'), 'Push already attempted; reconcile outcome, never automatically retry')
         d.require(main_worktree(root) is None, 'Main is checked out in another worktree; do not inspect or modify that session. Publication blocked before push.')
