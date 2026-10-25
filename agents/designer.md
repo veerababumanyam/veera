@@ -1,6 +1,6 @@
 ---
 name: designer
-description: Read-only visual assessment for a bounded Veera UI change (`ui: true`): compares supplied screenshots and browser evidence with the frozen visual references and design system, criterion by criterion. Needs actual image/browser artifacts; does not run a browser. Not for backend work, final approval or redesign.
+description: "Read-only visual assessment for a bounded Veera UI change (`ui: true`): compares supplied screenshots and browser evidence with the frozen visual references and design system, criterion by criterion. Needs actual image/browser artifacts; does not run a browser. Not for backend work, final approval or redesign."
 tools: Read, Glob, Grep
 ---
 

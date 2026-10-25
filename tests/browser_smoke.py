@@ -34,8 +34,8 @@ def main():
             (artifacts / 'dashboard.dom.html').write_text(result.stdout, encoding='utf-8')
             assert result.returncode == 0, 'Chrome failed; see browser.stderr.log'
             assert 'Live · updated' in result.stdout, 'Dashboard did not fetch live state'
-            assert 'FIX: &lt;img' in result.stdout, 'Request must render as text, never HTML'
-            assert '>not run</span>' in result.stdout, 'Unrun checks must not appear passed'
+            assert '&lt;img src=x onerror=alert(1)&gt; Visual smoke fixture' in result.stdout, 'Request must render as text, never HTML'
+            assert '>Not started</span>' in result.stdout, 'Unrun checks must not appear passed'
             assert 'Frozen specification' in result.stdout, 'Task document did not render'
             assert (artifacts / 'dashboard.png').stat().st_size > 1000, 'Screenshot missing'
             screenshots = [str(artifacts / 'dashboard.png')]
@@ -43,7 +43,7 @@ def main():
                 screenshot = artifacts / f'dashboard-{width}.png'
                 rendered = subprocess.run([chrome, '--headless', '--disable-gpu', '--no-proxy-server', '--no-first-run', '--disable-background-networking', '--disable-component-update', '--disable-extensions', '--user-data-dir=' + str(Path(temp) / ('browser-' + str(width))), '--window-size=' + str(width) + ',1000', '--virtual-time-budget=3000', '--screenshot=' + str(screenshot), '--dump-dom', url + '?doc=guide-docs-intake-and-autonomy#documents'], capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=30)
                 assert rendered.returncode == 0, rendered.stderr
-                assert 'One intake, before execution' in rendered.stdout, 'Subdocument did not render'
+                assert 'Initial interview, before execution' in rendered.stdout, 'Subdocument did not render'
                 assert screenshot.stat().st_size > 1000, 'Responsive screenshot missing'
                 screenshots.append(str(screenshot))
             print(json.dumps({'status': 'passed', 'checks': ['live status rendered', 'untrusted request escaped', 'not-run status', 'task document HTML', 'linked handbook HTML at four window widths'], 'screenshots': screenshots}))

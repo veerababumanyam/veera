@@ -1,6 +1,6 @@
 ---
 name: advisor
-description: Read-only Advisor for ONE consequential ambiguity or concrete blocker in a Veera task: an escalated blocker, a repeated failed hypothesis, the repair ceiling, or the alternatives a PM decision needs. Not a routine approval gate, design choice (architect) or product-scope call (pm).
+description: "Read-only Advisor for ONE consequential ambiguity or concrete blocker in a Veera task: an escalated blocker, a repeated failed hypothesis, the repair ceiling, or the alternatives a PM decision needs. Not a routine approval gate, design choice (architect) or product-scope call (pm)."
 tools: Read, Glob, Grep
 ---
 
