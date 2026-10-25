@@ -11,3 +11,39 @@ graft/.cache/
 
 # Claude Code workflow worktrees.
 .claude/worktrees/
+
+# Python tooling and local environments.
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+.venv/
+venv/
+*.egg-info/
+.coverage
+coverage.xml
+htmlcov/
+
+# Dependency, build and test output.
+node_modules/
+dist/
+build/
+out/
+.next/
+coverage/
+target/
+.cache/
+
+# Local settings and disposable files; keep example environment templates.
+.env
+.env.*
+!.env.example
+!.env.sample
+*.log
+*.tmp
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

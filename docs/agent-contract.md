@@ -6,7 +6,7 @@ Guidance package: 0.2.6. Resolve package-relative references against the actual 
 
 The controller `scripts/delivery.py` is the record of truth: a claim is true only when its returned state shows it. Only the coordinator owner runs it, with the Session isolation flags on every call.
 
-1. `workspace` from a clean committed original root; work only in the returned TASK with the returned owner file.
+1. `workspace` from the authorized original root (local tasks may snapshot uncommitted work; publication requires a clean default-branch tip); work only in the returned TASK with the returned owner file.
 2. Discover, write and read back the Bounded contract under `.veera-artifacts/`; `doctor`; `init` once.
 3. `phase` moves one step at a time: `discover` → `plan` → `implement` → `verify` → `review`. Edit only frozen scope; run `status` before expensive work.
 4. Publishing mode only: `release-prepare` while still in `implement`.

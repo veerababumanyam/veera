@@ -203,6 +203,34 @@ Optimize unnecessary context, not necessary reasoning or evidence: keep the syst
 
 Use a small stable repository/decision packet with source references and a separate changing checkpoint. Reuse existing sessions for focused follow-ups, read targeted files, invalidate stale facts, and use available context for relevant evidence rather than dumping entire repositories. "Think carefully" means check assumptions and alternatives at consequential decisions and return concise reasons, not hidden chain-of-thought. Prompt caching is host/provider-managed: this plugin makes no cache-hit, token-cost or context-size guarantee. The dashboard displays unknown telemetry as unknown. No automatic embeddings or cross-project memory.
 
+## Developing from a clean checkout
+
+Install Python 3.10+ (3.12+ on Windows), Git and Node.js. The runtime uses the
+Python standard library and the dashboard uses plain JavaScript: there is no
+package installation, dependency lockfile or compiled distribution to build.
+Clone the repository, change into its root, and run:
+
+```sh
+python scripts/verify_checkout.py --require-clean --jobs 4 --browser
+claude plugin validate . --strict
+```
+
+The verification command compiles Python sources in memory, checks JavaScript
+syntax, runs all Python test modules and both JavaScript regression suites, and
+checks that Git remains clean. `--browser` adds real Chrome/Chromium/Edge smoke
+checks; omit it only when a browser is unavailable. Claude CLI is needed for the
+separate plugin validation. On systems where Python is named `python3`, use that
+name instead. Tests may skip OS features unavailable to the current account,
+such as creating Windows symlinks; inspect the test summary.
+
+For development, omit `--require-clean` until changes are committed. Use a topic
+branch, keep generated output and local settings out of Git, run these checks,
+and merge reviewed, completed changes into `main`. Do not publish WIP snapshots.
+Clean-checkout enforcement for application delivery lives in
+`scripts/git_delivery.py`: local tasks may snapshot a dirty checkout without
+changing it, while publication refuses snapshots and non-default starting tips.
+Resolve in-progress Git operations before starting a task.
+
 ## Verification and limitations
 
 ```bash
