@@ -20,6 +20,16 @@ import uuid
 STATE = '.veera'
 TERMINAL = {'complete', 'verified-local', 'blocked', 'budget-exhausted', 'user-stopped'}
 PHASES = ['discover', 'plan', 'implement', 'verify', 'review']
+LANES = ('standard', 'small')
+SMALL_SCOPE = 12
+SMALL_CORRECTIONS = 2
+# A clean test run whose count_pattern read nothing: a reporting defect, not a failing suite.
+COUNT_ONLY = 'exit 0 but count_pattern matched no tests'
+# Log signatures of a check that cannot work as written, as opposed to a fix
+# that fails it: a runner or test file the environment lacks, or no tests run.
+DEFECTIVE = re.compile(r"No module named '?pytest|ERROR: file (?:or directory )?not found|can't open file|command not found"
+                       r"|executable file not found|No such container|Container \S+ is not running|no tests ran|Ran 0 tests|finished: 0 passed")
+OWN_RUNNERS = ('bin/test', 'tests/runtests.py')
 
 
 class DeliveryError(Exception):
@@ -143,12 +153,20 @@ def rebind_check_inputs(root, report):
     return check_reporting.rebind(root, report, sys.modules[__name__])
 
 
+def small(state):
+    return state['contract'].get('lane') == 'small'
+
+
 def expire(state):
     changed = False
     if state['status'] not in TERMINAL and state.get('soft_deadline') and time.time() >= state['soft_deadline'] and not state.get('soft_notified'):
         state['soft_notified'] = True
-        state['replan_required'] = True
-        event(state, 'replan', 'Soft target reached: PM/Architect/Advisor must replan and continue the full task; do not abandon or weaken acceptance')
+        if small(state):
+            # A one-defect task has nothing for a committee to reallocate.
+            event(state, 'soft-target', 'Soft target reached on the small lane: continue the same bounded fix under the hard ceiling')
+        else:
+            state['replan_required'] = True
+            event(state, 'replan', 'Soft target reached: PM/Architect/Advisor must replan and continue the full task; do not abandon or weaken acceptance')
         changed = True
     if state['status'] not in TERMINAL and time.time() >= state['deadline']:
         state['status'] = 'budget-exhausted'
@@ -234,6 +252,13 @@ def validate_contract(contract, root):
         require('release' not in contract, 'Local verification must omit release; it grants no release authority')
     for key in ('scope', 'criteria', 'checks'):
         require(isinstance(contract.get(key), list) and contract[key], key + ' must be a nonempty list')
+    require(contract.get('lane', 'standard') in LANES, 'Unknown lane')
+    if contract.get('lane') == 'small':
+        # Proportionate ceremony for one bounded, unpublished defect; scope,
+        # check, fingerprint, repair and ownership gates are unchanged.
+        require(contract.get('delivery_mode') == 'local-verify', 'The small lane is local-verify only; publication uses the standard lane')
+        require(not contract.get('ui'), 'UI work uses the standard lane')
+        require(len(contract['scope']) <= SMALL_SCOPE, 'The small lane covers at most %d scope entries' % SMALL_SCOPE)
     for name in contract['scope']:
         require(isinstance(name, str) and name and not Path(name).is_absolute() and '..' not in Path(name).parts and name not in ('.', './'), 'Use explicit repository-relative scope')
         require(not any(p in ('.git', STATE, '.claude', '.veera-artifacts') for p in Path(name).parts), 'Protected scope entry')
@@ -634,6 +659,21 @@ def resume(root, report):
         return state
 
 
+def canonical_scope(root, name):
+    """Refuse a scope addition that is not a plain path inside this task."""
+    require(isinstance(name, str) and name and not re.search(r'[\\:*?\[\]|<>"\x00-\x1f]', name), 'Use explicit canonical repository-relative scope')
+    parts = name.removesuffix('/').split('/')
+    require(all(part and part not in ('.', '..') and part == part.strip() and not part.endswith('.') for part in parts), 'Use explicit canonical repository-relative scope')
+    require(not any(re.fullmatch(r'(?i:con|prn|aux|nul|conin\$|conout\$|com[1-9\u00b9\u00b2\u00b3]|lpt[1-9\u00b9\u00b2\u00b3])', part.split('.')[0].rstrip(' ')) for part in parts), 'Windows device names are invalid scope entries')
+    require(not any(part.lower() in ('.git', STATE, '.claude', '.codex', '.veera-artifacts', 'credentials.json', 'id_rsa', 'id_ed25519') or part.lower().startswith('.env') for part in parts), 'Protected scope entry')
+    target = root / name
+    require(target.resolve().is_relative_to(root), 'Scope escapes repository')
+    for path in (target, *target.parents):
+        if path == root:
+            break
+        require(not path.is_symlink() and not (hasattr(path, 'is_junction') and path.is_junction()) and not (path / '.git').exists(), 'Scope must not traverse links, junctions or nested repositories')
+
+
 def amend(root, report):
     """Record an authorized additive contract delta without resuming or granting time."""
     root = Path(root).resolve()
@@ -646,17 +686,7 @@ def amend(root, report):
         require(isinstance(report.get(key, []), list), key + ' must be a list')
     require(any(report.get(key) for key in additions), 'Amendment must add scope, criteria or checks')
     for name in report.get('add_scope', []):
-        require(isinstance(name, str) and name and not re.search(r'[\\:*?\[\]|<>"\x00-\x1f]', name), 'Use explicit canonical repository-relative scope')
-        parts = name.removesuffix('/').split('/')
-        require(all(part and part not in ('.', '..') and part == part.strip() and not part.endswith('.') for part in parts), 'Use explicit canonical repository-relative scope')
-        require(not any(re.fullmatch(r'(?i:con|prn|aux|nul|conin\$|conout\$|com[1-9\u00b9\u00b2\u00b3]|lpt[1-9\u00b9\u00b2\u00b3])', part.split('.')[0].rstrip(' ')) for part in parts), 'Windows device names are invalid scope entries')
-        require(not any(part.lower() in ('.git', STATE, '.claude', '.codex', '.veera-artifacts', 'credentials.json', 'id_rsa', 'id_ed25519') or part.lower().startswith('.env') for part in parts), 'Protected scope entry')
-        target = root / name
-        require(target.resolve().is_relative_to(root), 'Scope escapes repository')
-        for path in (target, *target.parents):
-            if path == root:
-                break
-            require(not path.is_symlink() and not (hasattr(path, 'is_junction') and path.is_junction()) and not (path / '.git').exists(), 'Scope must not traverse links, junctions or nested repositories')
+        canonical_scope(root, name)
     for key, fields in (('add_criteria', {'id', 'text', 'checks'}), ('add_checks', {'id', 'kind', 'argv', 'count_pattern', 'timeout_seconds', 'artifacts'})):
         for entry in report.get(key, []):
             require(isinstance(entry, dict) and entry.keys() <= fields, 'Unknown or invalid ' + key + ' fields')
@@ -700,9 +730,269 @@ def amend(root, report):
         return state
 
 
+def log_tail(root, name, lines=40):
+    """Last lines of a check log, so a failure needs no separate log read."""
+    if not isinstance(name, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,64}-[0-9a-f]{32}\.log', name):
+        return ''
+    try:
+        text = (storage(root) / name).read_bytes()[-16384:].decode(errors='replace')
+    except OSError:
+        return ''
+    return '\n'.join(text.splitlines()[-lines:])[-4000:]
+
+
+def place(spec, target):
+    """Replace `{TASK_NAME}` and `{TASK}` in a check's argv for this worktree."""
+    target = Path(target)
+    return dict(spec, argv=[arg.replace('{TASK_NAME}', target.name).replace('{TASK}', str(target)) if isinstance(arg, str) else arg
+                            for arg in spec['argv']])
+
+
+def check_paths(contract, root):
+    """Refuse checks that name a test file absent from the checkout and scope.
+
+    Only repository-relative `.py` paths with a directory part are inspected,
+    resolved from the root and from any `cd` into the task placeholder. A
+    pytest check in a project that ships its own runner returns a warning:
+    the environment may lack pytest, which no static check can tell.
+    """
+    root = Path(root).resolve()
+    warnings = []
+    for spec in contract['checks']:
+        for arg in spec['argv']:
+            bases = [root]
+            for target in re.findall(r'\bcd\s+["\']?([^\s"\';&|]+)', arg):
+                tail = re.split(r'\{TASK(?:_NAME)?\}', target, maxsplit=1)
+                if len(tail) == 2 and tail[1].strip('/\\'):
+                    bases.append(root / tail[1].strip('/\\'))
+            for token in re.findall(r'[^\s\'"]+', arg):
+                name = token.split('::')[0].split('=', 1)[-1].rstrip(',;)')
+                parts = re.split(r'\{TASK(?:_NAME)?\}', name, maxsplit=1)
+                if len(parts) == 2:
+                    name = parts[1].strip('/\\')
+                elif name.startswith(('/', '\\', '~')) or re.match(r'[A-Za-z]:', name) or '/' not in name:
+                    continue
+                if not name.endswith('.py') or '$' in name or '{' in name:
+                    continue
+                found = any((base / name).exists() for base in bases)
+                listed = any(scoped((base / name).relative_to(root).as_posix(), contract['scope'])
+                             for base in bases if (base / name).resolve().is_relative_to(root))
+                require(found or listed, 'Check ' + spec['id'] + ' names ' + name + ', which is neither in the checkout nor in scope; correct the check before binding')
+        text = ' '.join(spec['argv'])
+        for runner in OWN_RUNNERS:
+            if re.search(r'\bpytest\b', text) and (root / runner).is_file():
+                warnings.append('Check ' + spec['id'] + ' runs pytest but the project ships ' + runner + '; confirm pytest exists in its environment or correct the check to that runner')
+    return warnings
+
+
+def workspace_init(root, task, session_id, mode, request, contract, minutes, hard_minutes):
+    """Bind a small-lane task worktree and freeze its contract in one call.
+
+    The contract is validated against the original checkout before anything is
+    bound. `{TASK}` and `{TASK_NAME}` in check argv become the new worktree's
+    absolute path and folder name, so checks can address it before its name is
+    known. The frozen copy is saved under the task's `.veera-artifacts/`. If
+    init then refuses, the binding stands and the result names the error.
+    """
+    original = Path(root).resolve()
+    require(isinstance(contract, dict) and contract.get('lane') == 'small', 'Workspace init freezes small-lane contracts only; the standard lane runs init after its readback')
+    require(type(minutes) in (int, float) and type(hard_minutes) in (int, float) and 0 < minutes <= hard_minutes, 'Workspace init needs task-derived --minutes within --hard-minutes')
+    require(request.strip(), 'Request must not be empty')
+    validate_contract(contract, original)
+    warnings = check_paths(contract, original)
+    import git_delivery
+    metadata = git_delivery.workspace(original, task, session_id)
+    target = Path(metadata['root'])
+    frozen = dict(contract, checks=[place(spec, target) for spec in contract['checks']])
+    artifacts = target / '.veera-artifacts'
+    try:
+        artifacts.mkdir(exist_ok=True)
+        atomic(artifacts / 'contract.json', frozen)
+        state = init(target, mode, request, frozen, minutes, hard_minutes)
+    except (DeliveryError, OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
+        return {**metadata, 'init_error': str(error),
+                'next': 'correct ' + str(artifacts / 'contract.json') + ' and run init --root TASK with the owner options'}
+    result = {**metadata, 'contract': str(artifacts / 'contract.json'), 'run_id': state['run_id'],
+              'lane': 'small', 'phase': state['phase'], 'checks': [spec['id'] for spec in frozen['checks']],
+              'argv': {spec['id']: spec['argv'] for spec in frozen['checks']},
+              'soft_minutes': minutes, 'hard_minutes': hard_minutes}
+    if warnings:
+        result['check_warnings'] = warnings
+    return result
+
+
+def recount(root, state, prior, spec):
+    """A standard-lane check re-read through a new count_pattern, or a refusal.
+
+    The command, kind and limits stay frozen; only the summary-line pattern
+    changes, and it must count the tests the failed run's own log printed.
+    Returns the corrected spec and that count.
+    """
+    require('count_pattern' in spec and all(spec[key] == prior.get(key) for key in spec if key not in ('id', 'count_pattern')),
+            'On the standard lane a correction changes only count_pattern')
+    result = state['checks'].get(prior['id']) or {}
+    require(prior['kind'] == 'test' and result.get('status') == 'failed' and result.get('exit_code') == 0 and not result.get('reason')
+            and not result.get('test_count') and result.get('argv') == prior['argv'],
+            'Only a test check that exited 0 but counted no tests is re-read in place; a failing suite needs repair')
+    try:
+        pattern = re.compile(spec['count_pattern'])
+    except (re.error, TypeError) as error:
+        raise DeliveryError('Invalid count_pattern: ' + str(error)) from error
+    require(pattern.groups == 1, 'Tests require count_pattern with one capture group')
+    name = result.get('log', '')
+    require(isinstance(name, str) and re.fullmatch(re.escape(prior['id']) + r'-[0-9a-f]{32}\.log', name), 'Invalid failed log identity')
+    log = root / STATE / name
+    require(log.is_file() and not log.is_symlink(), 'Failed log is missing')
+    with log.open('rb') as stream:
+        text = stream.read(8 * 1024 * 1024).decode(errors='replace')
+    try:
+        count = sum(int(x) for x in pattern.findall(text))
+    except ValueError:
+        count = 0
+    require(count > 0, 'The new count_pattern must count the tests the failed run printed')
+    return dict(prior, count_pattern=spec['count_pattern']), count
+
+
+def correct_contract(root, reason, add_scope=(), checks=()):
+    """Correct an active contract without stopping the run.
+
+    On the small lane `add_scope` widens the fix to a file one of the issue's
+    own cases needs (another call site of the defective path), and `checks`
+    replaces frozen checks that cannot work as written (a test file that does
+    not exist, a runner the environment lacks) under the same ID and kind. On
+    the standard lane only a test check that exited 0 but counted no tests may
+    be re-read through a new count_pattern (see `recount`); scope stays with
+    amend. A passing or recovered check is never replaced, repairs and time are
+    untouched, at most SMALL_CORRECTIONS apply per run and each keeps its prior
+    contract, failed result and evidence in state.
+    """
+    root = Path(root).resolve()
+    add_scope, checks = list(add_scope or []), list(checks or [])
+    require(isinstance(reason, str) and reason.strip(), 'Correction needs the evidence that requires it')
+    for name in add_scope:
+        canonical_scope(root, name)
+
+    def update(state):
+        lane = small(state)
+        require(lane or not add_scope, 'Only small-lane contracts widen scope in place; the standard lane uses amend')
+        require(not state.get('running'), 'A check is still running')
+        require(len(state.get('corrections', [])) < SMALL_CORRECTIONS, 'Correction allowance spent; report the remaining gap instead')
+        previous = state['contract']
+        frozen = {spec['id']: spec for spec in previous['checks']}
+        recovered = {r['report']['check_id'] for key in ('reporting_corrections', 'input_rebindings') for r in state.get(key, [])}
+        replaced, recounted = {}, {}
+        for spec in checks:
+            require(isinstance(spec, dict) and spec.get('id') in frozen and spec['id'] not in replaced, 'A correction replaces each frozen check once, by its ID')
+            require(state['checks'].get(spec['id'], {}).get('status') != 'passed', 'A passing check is not defective')
+            require(spec['id'] not in recovered, 'Checks with recovery receipts are not corrected in place')
+            if not lane:
+                replaced[spec['id']], recounted[spec['id']] = recount(root, state, frozen[spec['id']], spec)
+                continue
+            require(spec.get('kind') == frozen[spec['id']]['kind'], 'A correction keeps the check kind')
+            replaced[spec['id']] = place(spec, root)
+        added = [name for name in dict.fromkeys(add_scope) if name not in previous['scope']]
+        require(added or replaced, 'Correction must add scope or replace a check')
+        contract = dict(previous, scope=previous['scope'] + added,
+                        checks=[replaced.get(spec['id'], spec) for spec in previous['checks']])
+        validate_contract(contract, root)
+        if added:
+            from git_delivery import validate_inputs
+            validate_inputs(root, added)
+            require(snapshot(root, contract['scope']) == snapshot(root, previous['scope']), 'Added scope brings ignored files into the task; track them first')
+        correction = {'id': uuid.uuid4().hex, 'at': time.time(), 'reason': reason.strip()[:2000], 'add_scope': added,
+                      'checks': sorted(replaced), 'prior_results': {key: state['checks'].get(key) for key in replaced},
+                      'prior_contract': previous, 'prior_contract_hash': state['contract_hash']}
+        if recounted:
+            correction['recounted'] = recounted  # Tests the new pattern found in each failed log.
+        state.setdefault('corrections', []).append(correction)
+        state['contract'] = contract
+        state['contract_hash'] = digest(contract)
+        for key in replaced:
+            state['checks'].pop(key, None)
+        state['review'] = None
+        event(state, 'correct-contract', {key: correction[key] for key in ('id', 'reason', 'add_scope', 'checks')})
+        return {'status': state['status'], 'phase': state['phase'], 'correction': correction['id'], 'scope': contract['scope'],
+                'argv': {key: replaced[key]['argv'] for key in replaced},
+                'corrections_left': SMALL_CORRECTIONS - len(state['corrections'])}
+    return mutate(root, update)
+
+
+def defective_check(result, tail):
+    """Evidence that a failed check cannot work as written, or ''."""
+    match = DEFECTIVE.search(tail or '')
+    if match:
+        return match.group(0)
+    if result.get('exit_code') == 0 and not result.get('reason') and not result.get('test_count'):
+        return COUNT_ONLY
+    return ''
+
+
+def unread_count(result):
+    """True when a test check ran clean but its count_pattern read nothing."""
+    return result.get('status') == 'failed' and result.get('exit_code') == 0 and not result.get('reason') and result.get('test_count') == 0
+
+
+def verify_local(root, notes=None, report=None):
+    """Close an owned local-verify task in one call: verify, review, finish.
+
+    Each frozen check runs on the current tree unless it already passed at this
+    fingerprint. Small-lane tasks may record an honest coordinator self-review
+    from notes; standard-lane tasks still need an independent review report.
+    Every gate of the separate commands applies and nothing is published.
+    """
+    root = Path(root).resolve()
+    state = status(root)
+    active(state)
+    contract = state['contract']
+    require(state.get('version', 1) >= 2 and contract.get('delivery_mode') == 'local-verify', 'verify-local closes owned local-verify tasks only')
+    require(report is not None or small(state), 'Standard-lane tasks need an independent review file')
+    require(report is not None or (isinstance(notes, str) and notes.strip()), 'Self-review needs notes on the diff against each criterion')
+    while PHASES.index(state['phase']) < PHASES.index('verify'):
+        state = phase(root, PHASES[PHASES.index(state['phase']) + 1])
+    fingerprint = digest(snapshot(root))
+    results = {}
+    for spec in contract['checks']:
+        result = state['checks'].get(spec['id'], {})
+        if not (result.get('status') == 'passed' and result.get('fingerprint') == fingerprint):
+            require(state['phase'] == 'verify', 'Source changed after verification; call repair first')
+            result = check(root, spec['id'])
+        results[spec['id']] = {key: result.get(key) for key in ('status', 'exit_code', 'test_count', 'reason', 'log')}
+        if result['status'] != 'passed':
+            tail = results[spec['id']]['log_tail'] = log_tail(root, result.get('log'))
+            evidence = defective_check(result, tail) if small(state) else (COUNT_ONLY if unread_count(result) else '')
+            failed = {'status': 'failed', 'failed_check': spec['id'], 'checks': results,
+                      'next': 'repair --reason NEW_EVIDENCE, correct the source, then verify-local again'}
+            if evidence:
+                # A defective check is corrected and the run carries on; it
+                # never strands a fix behind a stop.
+                failed['defective_check'] = evidence
+                failed['next'] = ('If the check itself cannot work (' + evidence + '): correct-contract --root TASK --reason EVIDENCE '
+                                  '--file CHECKS.json replaces it under the same ID, then verify-local again; no repair is spent. '
+                                  'If the fix is at fault: ' + failed['next'])
+            return failed
+    if state['phase'] == 'verify':
+        phase(root, 'review')
+    corrections = [{'reason': c['reason'], 'add_scope': c['add_scope'], 'checks': c['checks']} for c in state.get('corrections', [])]
+    if report is None:
+        report = {'reviewer': 'coordinator self-review (small lane; not independent)', 'independent': False,
+                  'approved': True, 'criteria': [c['id'] for c in contract['criteria']],
+                  'fingerprint': digest(snapshot(root)), 'notes': notes.strip()[:2000]}
+        if corrections:
+            report['corrections'] = corrections
+    review(root, report)
+    state = finish(root)
+    closed = {'status': state['status'], 'run_id': state['run_id'], 'root': state['root'],
+              'lane': contract.get('lane', 'standard'), 'fingerprint': fingerprint, 'checks': results,
+              'reviewer': report['reviewer'], 'repairs': state['repairs']}
+    if corrections:
+        closed['corrections'] = corrections
+    return closed
+
+
 def decision(root, report):
     def update(state):
-        require(report.get('owner') == 'pm' and {'architect', 'advisor'} <= set(report.get('consulted', [])), 'Material decisions require PM ownership and Architect/Advisor consultation')
+        committee = report.get('owner') == 'pm' and {'architect', 'advisor'} <= set(report.get('consulted', []))
+        require(committee or (report.get('owner') == 'coordinator' and small(state)), 'Material decisions require PM ownership and Architect/Advisor consultation')
         require(report.get('decision') and report.get('reason'), 'Decision and rationale required')
         if state.get('repair_escalation'):
             from task_context import sources
@@ -716,7 +1006,7 @@ def decision(root, report):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     subs = parser.add_subparsers(dest='command', required=True)
-    for command in ('init', 'status', 'phase', 'check', 'review', 'finish', 'stop', 'repair', 'decision', 'dashboard', 'dashboard-info', 'fingerprint', 'archive', 'workspace', 'release-prepare', 'publish', 'checkpoint', 'resume', 'amend', 'extend-repairs', 'correct-check-reporting', 'rebind-check-inputs', 'release-reconcile', 'context', 'context-import', 'context-item', 'blocker', 'blocker-human-resolve', 'unbind'):
+    for command in ('init', 'status', 'phase', 'check', 'review', 'finish', 'stop', 'repair', 'decision', 'dashboard', 'dashboard-info', 'fingerprint', 'archive', 'workspace', 'release-prepare', 'publish', 'checkpoint', 'resume', 'amend', 'extend-repairs', 'correct-check-reporting', 'rebind-check-inputs', 'release-reconcile', 'context', 'context-import', 'context-item', 'blocker', 'blocker-human-resolve', 'unbind', 'verify-local', 'correct-contract'):
         sub = subs.add_parser(command)
         sub.add_argument('--root', required=True, type=Path)
         sub.add_argument('--session-id', required=True)
@@ -732,6 +1022,11 @@ def main():
             sub.add_argument('--hard-minutes', type=float, required=True, help='Task-specific authorized remaining hard allowance')
         elif command == 'workspace':
             sub.add_argument('--task', required=True)
+            sub.add_argument('--contract', help='Small lane: freeze this contract in the new worktree in the same call')
+            sub.add_argument('--mode', choices=['build', 'fix'], default='fix')
+            sub.add_argument('--request')
+            sub.add_argument('--minutes', type=float)
+            sub.add_argument('--hard-minutes', type=float)
         elif command == 'phase':
             sub.add_argument('--name', choices=PHASES, required=True)
         elif command in ('check', 'context-item'):
@@ -740,6 +1035,13 @@ def main():
             sub.add_argument('--file', required=True)
         elif command in ('stop', 'repair', 'checkpoint', 'release-reconcile'):
             sub.add_argument('--reason', required=True)
+        elif command == 'verify-local':
+            sub.add_argument('--notes', help='Small-lane self-review: the diff checked against each criterion')
+            sub.add_argument('--file', help='Independent review report; required on the standard lane')
+        elif command == 'correct-contract':
+            sub.add_argument('--reason', required=True, help='Evidence for the correction, such as the defective check log line')
+            sub.add_argument('--add-scope', action='append', default=[], help='Small lane: a file one of the issue cases needs')
+            sub.add_argument('--file', help='Small lane: JSON {"checks": [...]} replacing defective frozen checks by ID')
         elif command == 'dashboard':
             sub.add_argument('--port', type=int, default=0)
             sub.add_argument('--no-open', action='store_true', help='Serve without opening a browser (headless host)')
@@ -770,7 +1072,11 @@ def main():
             result = init(args.root, args.mode, args.request, read_json(args.contract), args.minutes, args.hard_minutes)
         elif command in ('workspace', 'release-prepare', 'publish'):
             import git_delivery
-            if command == 'workspace':
+            if command == 'workspace' and args.contract:
+                require(args.request is not None and args.minutes is not None and args.hard_minutes is not None, 'Workspace init needs --request, --minutes and --hard-minutes')
+                result = workspace_init(args.root, args.task, args.session_id, args.mode, args.request, read_json(args.contract), args.minutes, args.hard_minutes)
+            elif command == 'workspace':
+                require(args.request is None and args.minutes is None and args.hard_minutes is None, 'Init options need --contract')
                 result = git_delivery.workspace(args.root, args.task, args.session_id)
             elif command == 'release-prepare':
                 result = git_delivery.prepare(args.root)
@@ -778,8 +1084,20 @@ def main():
                 result = git_delivery.publish(args.root)
         elif command == 'phase':
             result = phase(args.root, args.name)
+        elif command == 'verify-local':
+            result = verify_local(args.root, args.notes, read_json(args.file) if args.file else None)
+        elif command == 'correct-contract':
+            replacement = read_json(args.file) if args.file else {}
+            require(isinstance(replacement, dict) and set(replacement) <= {'checks'} and isinstance(replacement.get('checks', []), list), 'Correction file holds only {"checks": [...]}')
+            result = correct_contract(args.root, args.reason, args.add_scope, replacement.get('checks', []))
         elif command == 'check':
             result = check(args.root, args.id)
+            if unread_count(result):
+                # A clean run whose summary line went unread is a reporting defect, not a failing suite.
+                result = {**result, 'defective_check': COUNT_ONLY,
+                          'next': 'If the log shows the tests ran, write {"checks": [{"id": "' + args.id + '", "count_pattern": PATTERN}]} '
+                                  'with a pattern that reads its summary line, run correct-contract --root TASK --reason EVIDENCE --file FILE, '
+                                  'then check again; no repair is spent. If no tests ran, repair the suite.'}
         elif command in ('context', 'context-item', 'context-import', 'blocker', 'blocker-human-resolve'):
             import task_context
             if command == 'context':
@@ -810,7 +1128,7 @@ def main():
             result = info(args.root)
         else:
             result = globals()[command](args.root)
-        if command in ('finish', 'publish') and result.get('status') in ('complete', 'verified-local'):
+        if command in ('finish', 'publish', 'verify-local') and result.get('status') in ('complete', 'verified-local'):
             # Completion is durable before releasing only this owner's binding.
             # A cleanup failure must not turn successful publication into a retry.
             try:
@@ -820,7 +1138,7 @@ def main():
                 result['session_binding'] = 'cleanup-required'
                 result['session_cleanup_error'] = str(error)
         print(json.dumps(result, indent=2))
-        if result.get('status') in ('failed', 'blocked', 'budget-exhausted'):
+        if result.get('status') in ('failed', 'blocked', 'budget-exhausted') or result.get('init_error'):
             sys.exit(1)
     except (DeliveryError, OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
         print(json.dumps({'error': str(error)}), file=sys.stderr)
