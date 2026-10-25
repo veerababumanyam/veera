@@ -1,6 +1,6 @@
 ---
 name: fix
-description: Diagnose and repair requested software defects automatically from ordinary task messages, using owned work, focused verification and review. No special command is required; informational questions do not start delivery.
+description: Diagnose and repair defects with owned work, focused checks and review. Ordinary requests start delivery; questions do not.
 ---
 
 # Veera — Fix
