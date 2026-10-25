@@ -1,5 +1,15 @@
 # Explicit recovery authorization
 
+Pick by situation, then read only that section. Each needs a stopped v2 task (`blocked`, `budget-exhausted` or `user-stopped`) with no running check or push attempt, its exact current checkpoint and actual human authorization; none resolves a blocker or resumes work, and each leaves acceptance unchanged.
+
+| Situation | Operation |
+| --- | --- |
+| Global repair rounds are spent and the user granted more | `extend-repairs` (Additional global repair rounds) |
+| A frozen test check fails only because its trusted verifier prints no count | `correct-check-reporting` (Correcting a verifier's missing count) |
+| A frozen check must read a newly finalized campaign at new paths | `rebind-check-inputs` (Rebinding a frozen check to a new campaign) |
+| More time | `resume` with an authorized `time_plan`, in `docs/agent-contract.md` |
+| More scope, criteria or checks | `amend`, in `docs/agent-contract.md` |
+
 Only the existing owner uses these commands with the normal `--root`, `--session-id`, `--capability-file`, and, when needed, `--host codex --plugin-data` arguments. Approval references record actual human authorization; they cannot authenticate it or override native permission controls. Never edit state or owner records manually.
 
 In a stopped Codex run, invoke the controller as a standalone command, including PowerShell's `&` when needed. Do not append redirection, pipelines or shell chains: those are deliberately outside the recovery exception. The controller persists its own receipts. A successful recovery operation can still return exit code 1 with state JSON when the task remains `blocked` or `budget-exhausted`; inspect its recorded receipt before retrying.

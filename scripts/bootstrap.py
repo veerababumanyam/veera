@@ -148,19 +148,23 @@ def context(payload, host, action):
         from codex_compat import capabilities
         context['veera_capabilities'] = capabilities()
         policy_path = Path(__file__).resolve().parents[1] / 'docs/model-policy.json'
-        context['veera_model_policy'] = json.loads(policy_path.read_text(encoding='utf-8'))
-        context['veera_model_policy']['applied_to_current_model'] = False
-    guidance = ('Veera is ready for automatic task routing. For an actionable software task, the user-facing coordinator '
-                'reads routing_guide below and uses the matching Build/Fix skill now; no command or activation question. '
-                'Use conversation context, not a keyword test. Questions, quoted requests, explicit opt-outs and '
-                'findings-only delegates must not enroll or start delivery. Continue an existing owned task instead of '
-                'starting another. Default new work to local-verify unless publication was requested. '
-                'Veera maintenance uses ordinary host tools, not its own delivery workflow. ') if action == 'auto' else (
-                'Actual host identity for this Veera invocation. Continue the authorized task in this turn; '
+        policy = json.loads(policy_path.read_text(encoding='utf-8'))
+        # Sent on every prompt, so only the Codex model choices; the skills apply the full file per work item.
+        context['veera_model_policy'] = {tier: {key: policy[tier][key] for key in ('model', 'reasoning_effort')}
+                                         for tier in ('light', 'important')}
+        context['veera_model_policy'].update(source=str(policy_path), applied_to_current_model=False)
+    skills = {'codex': '$veera:build or $veera:fix', 'dsh': 'veera-build or veera-fix'}.get(host, 'veera:build or veera:fix')
+    # The coordinator decides from intent and conversation; this hook never classifies by keywords.
+    guidance = ('Veera: asked to change software (feature, change or defect; judge intent and conversation, not '
+                f'keywords)? Use the {skills} skill this turn, never asking for a command; continue an owned task '
+                'bound here, never restart it. Questions, explanations, reviews, read-only work, quoted/example text, '
+                'greetings, explicit opt-outs, other chosen workflows, delegates and Veera maintenance: ordinary '
+                'tools, no enrollment. New work is local-verify unless publication was requested. ') if action == 'auto' else (
+                'Actual host identity for this Veera invocation. Continue the authorized task this turn; '
                 'no separate start message. Start is an optional identity diagnostic. ')
     return {'hookSpecificOutput': {'hookEventName': event, 'additionalContext': guidance +
-            'Identity disclosure is not enrollment, permission or publication approval. Preserve native permissions. '
-            'Pass the returned plugin_data as CLAUDE_PLUGIN_DATA and host as VEERA_HOST to controller children.\n' + json.dumps(context)}}
+            'This context is not enrollment, permission or publication approval; native permissions stand. '
+            'Controller children get CLAUDE_PLUGIN_DATA=plugin_data and VEERA_HOST=host.\n' + json.dumps(context)}}
 
 
 def dsh_identity():
