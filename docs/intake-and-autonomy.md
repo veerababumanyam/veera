@@ -8,7 +8,7 @@ Follow [requirements analysis](requirements-analysis.md) first: research the app
 
 1. Read the user's request and available authorized project context. Reuse information and consent already supplied. Do not ask the same question twice.
 2. Establish the desired outcome, repository, scope, exclusions, acceptance checks, delivery mode, budget, allowed integrations and publication destination if publication is requested. Inspect host capabilities before enrolling: do not start a plan that depends on unsupported approval/tool paths.
-3. Separate necessary missing information from routine implementation choices. Choose reasonable defaults for reversible low-impact details, documenting assumptions. PM may settle priorities within the agreed goal; Architect and Advisor handle technical tradeoffs within the existing scope and ceilings. The orchestrator retains task ownership and native tools.
+3. Separate necessary missing information from routine implementation choices. A written spec that answers the product questions leaves no interview: record it as a known input and its gaps as assumptions. Choose reasonable defaults for reversible low-impact details, documenting assumptions. PM may settle priorities within the agreed goal; Architect and Advisor handle technical tradeoffs within the existing scope and ceilings. The orchestrator retains task ownership and native tools.
 4. If essential information or user-delegable authorization is still missing, present a concise consolidated interview covering the unresolved items and concrete effects. If an answer exposes a new essential contradiction, resolve it now before implementation. Use existing evidence instead of asking for credentials or secrets in chat. Silence is not consent. Permissions that the host requires at action time cannot be prepaid by this question.
 5. Capture the actual user request/reference, allowed actions and limits, delegated decisions, known inputs and assumptions in `contract.intake`. Read it back before init and include it in the existing frozen contract. No second database, session scan or new permission store.
 
@@ -48,5 +48,7 @@ All fields below are required when intake is present. Use actual user evidence a
   "native_approval": "required-where-applicable"
 }
 ```
+
+Each `authorized_actions` entry has exactly `action`, `scope`, `evidence`; each `delegated_decisions` entry exactly `topic`, `owner`, `limits`, with `owner` one of `pm`, `architect`, `advisor`, `orchestrator`; each `known_inputs` entry exactly `name`, `value`, `source`. `assumptions` holds plain strings. `escalation` must be `block-affected-work` and `native_approval` `required-where-applicable`.
 
 The dashboard's **Intake & approvals** document displays this exact record. Its presence does not claim that a native approval was obtained. Controller validation rejects missing/unknown fields, unresolved questions and any attempted approval-policy override.

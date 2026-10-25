@@ -1,17 +1,30 @@
 # Automatic entry for ordinary requests
 
-The installed UserPromptSubmit hook supplies actual session identity for ordinary messages in Codex and Claude Code. This is lightweight context, not enrollment or a judgment that every message is a task. Interpret the current user request and conversation as a coordinator; do not use a verb checklist. Short bug reports, natural-language requests and continuations need no special command.
+On Claude Code and Codex the UserPromptSubmit hook supplies actual session identity for ordinary messages; DeepSeek Harness has no prompt hook, so its coordinator runs `scripts/bootstrap.py --dsh`. This context is neither enrollment nor a judgment that the message is a task. Decide from the request and conversation in any wording or language, never a verb checklist. No command is needed.
 
-1. For a requested software change, select Build for new or changed behavior, or Fix for a defect. Read the matching skill from `adapters/codex/skills/` on Codex or `skills/` on Claude, under the returned package root. Continue in this turn without asking the user to invoke a command or approve routine activation.
-2. Reuse an existing owned task and captured answers for follow-ups. Check only this session's exact binding. Do not create a new task, renew a budget or expand scope merely because another message arrived. Genuine new work begins after the previous task completed and released its binding.
-3. Answer informational questions and perform requested read-only investigation without enrollment, a worktree or a dashboard. A quoted example, status question, greeting or reference to a skill is not a request to execute it. Respect an explicit opt-out or another selected workflow. Findings-only delegates must not enroll or run Veera workflows; only the user-facing coordinator owns delivery.
-4. For new automatically routed work, use `delivery_mode: "local-verify"` unless the user has actually requested publication. Capture existing consent and essential requirements up front. Automatic routing does not authorize a push, release, deployment, destructive operation or external message. Existing native denials remain binding. Discovery, tests, review and completion requirements still apply.
-5. Veera's own maintenance uses ordinary host-authorized package tools. Do not make repairing the plugin depend on its delivery workflow.
+## Decide: first match wins
 
-Use the actual `session_id`, `plugin_data`, `host`, `cwd`, `package_root` and `python_executable` from the hook. The bootstrap's `requested_action: "auto"` is a routing invitation, not a Build/Fix classification. `enrolled: false` describes the hook's lack of enrollment side effects; it does not assert that the session has no pre-existing task.
+1. **You are a delegate** (findings-only, router child, specialist): never enroll or run Veera workflows; only the user-facing coordinator owns delivery.
+2. **Explicit opt-out or another selected workflow**: respect it.
+3. **Veera's own maintenance**: ordinary host-authorized package tools; repairing the plugin never depends on its delivery workflow.
+4. **Follow-up to an owned task bound to this session** (check only this session's exact binding): continue it with its captured answers; answer questions about it. Never create a new task, renew a budget or expand scope because another message arrived. New work begins after the previous task completed and released its binding.
+5. **No change asked for**: answer questions and do requested read-only investigation, review or planning without enrollment, worktree or dashboard. A quoted example, status question, greeting or reference to a skill is not a request to execute it.
+6. **A software change asked for**: **Fix** when existing behavior is wrong against intended, documented or tested behavior (crash, failing test, wrong result, or a bare report like "the total is wrong for refunds"); **Build** for new or changed behavior. If both, the primary deliverable decides; one task. Approving a change you proposed counts.
 
-Some desktop tool-created chats start with delegated input rather than a UserPromptSubmit event. The existing PreToolUse hook can supply the same actual identity when an unbound coordinator reads this installed package's Build/Fix skill. This fallback only adds context, never allows a tool or overrides a guard decision. It does not scan records, fabricate a user event, read a transcript or change hook trust. A skill merely being read to answer a question still must not start delivery.
+Still unclear whether a change is wanted: answer or investigate read-only and ask once; never enroll on a guess.
 
-If actual identity is unavailable, follow startup troubleshooting with ordinary permitted tools. Do not ask the user to repeat their request using a command. Explain the specific host integration failure if it prevents owned delivery; never replace the host identity or bypass a denial.
+## Enter
 
-Successful finish/publication still releases the task binding automatically as described in [task lifecycle](task-lifecycle.md). No manual stop command is required, and closing a chat does not count as completing a task.
+Read the matching skill under the returned package root: `skills/<build|fix>/SKILL.md` on Claude, `adapters/codex/skills/<build|fix>/SKILL.md` on Codex, `adapters/dsh/skills/veera-<build|fix>/SKILL.md` on DeepSeek Harness. Continue this turn; never ask for a command or routine activation approval.
+
+New automatically routed work uses `delivery_mode: "local-verify"` unless the user actually requested publication. Capture existing consent and essential requirements up front. Automatic routing authorizes no push, release, deployment, destructive operation or external message; native denials stay binding; discovery, tests, review and completion requirements still apply.
+
+Use the actual `session_id`, `plugin_data`, `host`, `cwd`, `package_root` and `python_executable` from the hook. `requested_action: "auto"` is a routing invitation, not a Build/Fix classification. `enrolled: false` means the hook enrolled nothing, not that the session has no task.
+
+## Without a prompt event
+
+Tool-created desktop chats may start with delegated input and no UserPromptSubmit. The PreToolUse hook then supplies the same actual identity when an unbound coordinator reads this package's Build/Fix skill (on Claude, also when it invokes `veera:build`/`veera:fix`). It only adds context: it never allows a tool, overrides a guard, scans records, fabricates a user event, reads a transcript or changes hook trust. Reading a skill to answer a question still starts no delivery.
+
+If identity is unavailable, follow startup troubleshooting with ordinary permitted tools; never ask the user to repeat the request as a command, replace host identity or bypass a denial. Explain the specific host integration failure if it blocks owned delivery.
+
+Successful finish/publication releases the binding automatically ([task lifecycle](task-lifecycle.md)); no stop command, and closing a chat is not completion.

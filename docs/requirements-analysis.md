@@ -12,6 +12,15 @@ The coordinator assigns a bounded, read-only requirements-analysis brief for und
 4. Derive observable requirements from that evidence. Consider only relevant normal, empty, invalid, failure, cancellation and recovery behavior; affected authorization/data integrity, accessibility, performance and operational needs; compatibility and migration if changed. Inspect existing checks before proposing new ones. Use `engineering-standards.md` selectively. Best practices mean the smallest idiomatic, verifiable solution, not a new dependency or whole-app checklist.
 5. Separate explicit requirements, evidence-backed implications and assumptions. Keep desirable unrelated enhancements in non-goals or a future-work note. Never silently promote them to requirements. Have PM resolve outcome/priority questions, Architect assess material interface/invariant choices and Advisor compare consequential alternatives. Record actual participation; routine sequencing needs no committee.
 
+## Written spec or detailed request
+
+When the user supplies a written spec, or a request that already states the behavior, that text is the requirement source and discovery is extraction, not an interview:
+
+1. Read the spec once, end to end, then the code on its impact path. Extract every normative rule (routes, fields, limits, status codes, error titles, ordering, invariants, concurrency, persistence) with its exact values and a section pointer, plus every existing behavior it declares binding.
+2. Group the rules into at most 30 requirements, one per observable behavior cluster (an endpoint, an invariant, an error family), each mapped to a criterion and check; keep the exact values in the requirement text so later steps copy, never paraphrase, them.
+3. Ask a question only for a contradiction inside the spec or against the code, or for human-only authority. Fill every other gap from project evidence, record it as an assumption with its reason, and do not offer an approaches menu or a design-approval round.
+4. Write a Review focus: at most five inputs or failure modes the spec implies but does not test (races, boundary values, malformed input, restart, cross-tenant access), each with the test that will pin it.
+
 ## Interview entirely before implementation
 
 Challenge ambiguity firmly when a wrong assumption would materially change the outcome. First research the answer: never ask users to explain code that can be inspected. Then consolidate the remaining product, scope, success, integration, delivery and delegated-authority choices in an initial interview. All clarification questions belong in this discovery phase. Ask a focused follow-up here if an answer reveals a contradiction; do not impose an arbitrary single-round limit or rush unresolved essential choices into implementation.
@@ -57,7 +66,7 @@ The record uses version 1. All fields shown below are required. Lists have at mo
 }
 ```
 
-`evidence.kind` is `user-request`, `code`, `documentation`, `external` or `observation`; include actual request evidence and at least one inspected source/observation. `requirements.basis` is `user-request`, `project-evidence` or `assumption`; an inferred assumption must be recorded explicitly. Every acceptance criterion must be covered by a requirement, every requirement by a plan step, and every frozen check by the plan. References must resolve; unknown/duplicate IDs are rejected.
+`evidence.kind` is `user-request`, `code`, `documentation`, `external` or `observation`; include actual request evidence and at least one inspected source/observation. `requirements.basis` is `user-request`, `project-evidence` or `assumption`; a requirement with basis `assumption` requires a nonempty `assumptions` list. Each requirement cites at least one evidence ID and one criterion ID; each plan step cites at least one requirement and one check. Every acceptance criterion must be covered by a requirement, every requirement by a plan step, and every frozen check by the plan. References must resolve; unknown/duplicate IDs are rejected. Each entry uses exactly the fields shown; an extra field is rejected.
 
 Each question entry has `id`, `question`, `options`, `recommendation`, `rationale`, `evidence_ids`, `answer`, `answer_source`, `resolved_by`. Options are two or three objects with `id`, `label`, `tradeoff`; recommendation names an offered option. For a necessary free-text question use an empty options list and empty recommendation. Answer/source/rationale must be nonempty. `resolved_by` is `user`, `pm`, `architect`, `advisor` or `orchestrator`. A text record alone does not prove consent.
 
