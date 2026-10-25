@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import time
 import uuid
@@ -29,13 +30,172 @@ def repository_lock(root):
         yield
 
 
-def clean(root):
+DEFAULT_BRANCHES = ('main', 'master', 'trunk')
+# Top-level files that agent hosts and tag indexers write into a checkout.
+TOOL_FILES = {'AGENTS.md', 'CLAUDE.md', 'CLAUDE.local.md', 'GEMINI.md', 'tags', 'TAGS'}
+
+
+def tool_state(root, kind, name):
+    """True for local tool output that a new task worktree never inherits.
+
+    Ignored files are never listed. Tolerated: a wholly untracked top-level
+    folder (a code index), untracked dot-paths (tool settings), an untracked
+    agent-instruction or tags file at the top level, and a tracked ignore file
+    whose only change is added lines. Other loose untracked files and any
+    other tracked change remain peer work that blocks the task.
+    """
+    parts = name.rstrip('/').split('/')
+    if kind == 'untracked':
+        top = len(parts) == 1 and (name.endswith('/') or name in TOOL_FILES)
+        return top or any(part.startswith('.') for part in parts)
+    if parts[-1] != '.gitignore':
+        return False
+    counts = git(root, 'diff', '--numstat', 'HEAD', '--', name).split('\t')
+    return len(counts) >= 2 and counts[0].isdigit() and counts[1] == '0'
+
+
+def leftovers(root):
+    """Return tolerated tool-state paths; refuse any other uncommitted change."""
     # Exclude only reserved untracked task bookkeeping via per-command pathspecs.
     # Never edit shared ignore/configuration files to hide it from other sessions.
     tracked = git(root, 'ls-files', '--', '.veera', '.veera-artifacts')
     d.require(not tracked, 'Reserved task-state paths must not contain tracked source')
-    output = git(root, 'status', '--porcelain', '--', '.', ':(exclude).veera', ':(exclude).veera-artifacts')
-    d.require(not output, 'Checkout contains uncommitted changes; preserve them and resolve ownership first')
+    output = git(root, 'status', '--porcelain=v2', '-z', '--untracked-files=normal', '--', '.', ':(exclude).veera', ':(exclude).veera-artifacts')
+    records = iter(output.split('\0'))
+    tolerated, blocking = [], []
+    for record in records:
+        if not record:
+            continue
+        if record.startswith('? '):
+            name, kind = record[2:], 'untracked'
+        else:
+            fields = record.split(' ', {'1': 8, '2': 9, 'u': 10}.get(record[0], 1))
+            if record.startswith('2 '):
+                next(records, None)  # Rename source path.
+            name, kind = fields[-1], 'tracked'
+            # Only a plain worktree/index modification of a non-submodule file qualifies.
+            if not (record.startswith('1 ') and set(fields[1]) <= {'.', 'M'} and fields[2] == 'N...'):
+                blocking.append(name)
+                continue
+        (tolerated if tool_state(root, kind, name) else blocking).append(name)
+    d.require(not blocking, 'Checkout contains uncommitted changes; preserve them and resolve ownership first: ' + ', '.join(blocking[:20]))
+    return tolerated
+
+
+def clean(root):
+    leftovers(root)
+
+
+def default_branch(root):
+    """Name the default branch the checkout is on, whatever it is called."""
+    heads = set(git(root, 'for-each-ref', '--format=%(refname:short)', 'refs/heads').splitlines())
+    remote = subprocess.run(['git', '-C', str(root), 'symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD'], capture_output=True, text=True, timeout=30)
+    name = remote.stdout.strip().partition('/')[2] if remote.returncode == 0 else ''
+    if name in heads:
+        return name
+    current = git(root, 'branch', '--show-current')
+    if current in DEFAULT_BRANCHES:
+        return current
+    named = [name for name in DEFAULT_BRANCHES if name in heads]
+    if len(named) == 1:
+        return named[0]
+    d.require(len(heads) == 1, 'Cannot identify the default branch; check out main, master or trunk')
+    return heads.pop()
+
+
+def present(path):
+    return path.exists() or path.is_symlink() or (hasattr(path, 'is_junction') and path.is_junction())
+
+
+def unrelated(target, session_id):
+    """True for a destination this owner can never recover: not a Veera task,
+    or another owner's initialized task. It is left untouched, never adopted."""
+    state = target / d.STATE
+    paths = (target, state, state / 'workspace.json')
+    if not target.is_dir() or any(p.is_symlink() or (hasattr(p, 'is_junction') and p.is_junction()) for p in paths):
+        return False  # Recovery refuses unsafe paths explicitly.
+    if not present(state):
+        return True
+    if not (state / 'state.json').is_file():
+        return False  # A partial workspace: only its owner may recover it.
+    try:
+        metadata = d.read_json(state / 'workspace.json')
+    except (OSError, ValueError, d.DeliveryError):
+        return False
+    return isinstance(metadata, dict) and metadata.get('session_id') != session_id
+
+
+def destination(root, task, session_id):
+    """Pick the task path and branch, skipping names left by finished or foreign work."""
+    for number in range(1, 10):
+        suffix = '-' + str(number) if number > 1 else ''
+        branch = 'veera/' + task + suffix
+        target = root.parent / (root.name + '-veera-' + task + suffix)
+        if present(target):
+            if not unrelated(target, session_id):
+                return target, branch, True
+            continue
+        taken = subprocess.run(['git', '-C', str(root), 'show-ref', '--verify', '--quiet', 'refs/heads/' + branch], timeout=30).returncode == 0
+        if not taken:
+            return target, branch, False
+    raise d.DeliveryError('Task names ' + task + ' through ' + task + '-9 are all taken; choose another task slug')
+
+
+CARRY_FILES, CARRY_FILE_BYTES, CARRY_TOTAL_BYTES = 200, 16 << 20, 64 << 20
+SCRATCH_SUFFIXES = ('.log', '.orig', '.rej', '.swp', '.bak', '.tmp')
+
+
+def carry_generated(root, target):
+    """Copy ignored files generated beside tracked source into a new worktree.
+
+    Install and build steps write files such as a setuptools-scm _version.py or
+    an in-place extension module that the project's tests import but a fresh
+    worktree lacks. Only single files inside tracked folders qualify; ignored
+    folders, top-level files, dot-paths, caches and scratch files stay behind.
+    Python modules are taken first, so many compiled catalogs or extension
+    files cannot crowd an imported _version.py out of the bounded copy. Files
+    left out by the bounds or an unreadable source are returned as skipped, so
+    the agent learns what the worktree still lacks instead of a failed start.
+    """
+    listed = git(root, 'ls-files', '-z', '--others', '--ignored', '--exclude-standard', '--directory', '--no-empty-directory')
+    folders = set(git(root, 'ls-tree', '-r', '-d', '-z', '--name-only', 'HEAD').split('\0'))
+    names, skipped, total = [], [], 0
+    for name in sorted(listed.split('\0'), key=lambda name: (not name.endswith('.py'), name)):
+        parts = name.split('/')
+        if not name or name.endswith('/') or len(parts) < 2 or '/'.join(parts[:-1]) not in folders:
+            continue
+        if any(part.startswith('.') for part in parts) or interpreter_cache(name) or name.endswith(SCRATCH_SUFFIXES):
+            continue
+        source = root / name
+        if source.is_symlink() or not source.is_file():
+            continue
+        destination = target / name
+        if present(destination):
+            continue
+        size = source.stat().st_size
+        if size > CARRY_FILE_BYTES or total + size > CARRY_TOTAL_BYTES or len(names) >= CARRY_FILES:
+            skipped.append(name)
+            continue
+        try:
+            shutil.copy2(source, destination)
+        except OSError:
+            skipped.append(name)
+            continue
+        names.append(name)
+        total += size
+    return sorted(names), sorted(skipped)
+
+
+def carried(root):
+    """Names workspace copied in from the original checkout, from owned metadata."""
+    path = Path(root) / d.STATE / 'workspace.json'
+    if path.is_symlink() or path.parent.is_symlink() or not path.is_file():
+        return set()
+    try:
+        names = d.read_json(path).get('carried', [])
+    except (OSError, ValueError, AttributeError, d.DeliveryError):
+        return set()
+    return {name for name in names if isinstance(name, str)} if isinstance(names, list) else set()
 
 
 def workspace(root, task, session_id=None):
@@ -46,21 +206,30 @@ def workspace(root, task, session_id=None):
         d.require(ownership.lookup(session_id) is None, 'Session already bound; do not adopt or overwrite a task')
     d.require(Path(git(root, 'rev-parse', '--show-toplevel')).resolve() == root, 'Use repository root')
     with repository_lock(root):
-        branch = 'veera/' + task
-        target = root.parent / (root.name + '-veera-' + task)
-        if target.exists() or target.is_symlink() or (hasattr(target, 'is_junction') and target.is_junction()):
+        target, branch, existing = destination(root, task, session_id)
+        if existing:
             return recover_workspace(root, target, branch, session_id)
-        clean(root)
-        base = git(root, 'rev-parse', 'refs/heads/main')
-        d.require(git(root, 'rev-parse', 'HEAD') == base, 'Start from main or a branch at exactly main; unrelated topic commits must not enter the task')
+        left = leftovers(root)
+        default = default_branch(root)
+        base = git(root, 'rev-parse', 'refs/heads/' + default)
+        d.require(git(root, 'rev-parse', 'HEAD') == base, 'Start from ' + default + ' or a branch at exactly ' + default + '; unrelated topic commits must not enter the task')
         git(root, 'worktree', 'add', '-b', branch, str(target), base)
         metadata = {'id': uuid.uuid4().hex, 'root': str(target), 'original': str(root), 'branch': branch, 'base': base, 'common': str(common(root)), 'created_at': time.time()}
         metadata['session_id'] = session_id
+        metadata['carried'], skipped = carry_generated(root, target)
         d.atomic(d.storage(target) / 'workspace.json', metadata)
         if session_id is not None:
             import ownership
             metadata['capability_file'] = ownership.enroll(session_id, target, metadata['id'])
-        return metadata
+        # Reported, not persisted: tool output stays in the original checkout.
+        # The full carried list stays in workspace.json; every later turn re-reads
+        # this output, so it names at most 20 files and one short next step.
+        return {**metadata, 'carried': metadata['carried'][:20], 'carried_count': len(metadata['carried']), 'base_branch': default, 'left_in_original': left[:20], 'carry_skipped': skipped[:20], 'next': next_step(target)}
+
+
+def next_step(target):
+    """One line telling the agent where all task work now happens."""
+    return 'Task root is ' + str(target) + ': edit files only by absolute paths under it and start every shell command with cd "' + str(target) + '" && so tests and git see the task, not the original checkout.'
 
 
 def recover_workspace(root, target, branch, session_id):
@@ -111,8 +280,20 @@ def owned(root):
     return meta
 
 
+CACHE_DIRS = {'__pycache__', '.pytest_cache', '.mypy_cache', '.ruff_cache', '.hypothesis'}
+
+
+def interpreter_cache(name):
+    """True for bytecode and test-runner caches that running checks leaves behind."""
+    parts = name.split('/')
+    return parts[-1].endswith(('.pyc', '.pyo')) or any(part in CACHE_DIRS for part in parts[:-1])
+
+
 def validate_inputs(root, scope):
-    ignored = git(root, 'ls-files', '--others', '--ignored', '--exclude-standard', '--', *scope)
+    # Generated files workspace carried from the original exist there too.
+    listed = git(root, 'ls-files', '-z', '--others', '--ignored', '--exclude-standard', '--', *scope)
+    kept = carried(root)
+    ignored = '\n'.join(name for name in listed.split('\0') if name and not interpreter_cache(name) and name not in kept)
     d.require(not ignored, 'Ignored untracked application inputs in scope are not releasable; track them explicitly before the task: ' + ignored[:500])
 
 
