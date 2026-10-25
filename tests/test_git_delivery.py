@@ -83,8 +83,10 @@ class GitDeliveryTests(unittest.TestCase):
         (self.original / 'unrelated.txt').write_text('not this task')
         g.git(self.original, 'add', 'unrelated.txt')
         g.git(self.original, 'commit', '-m', 'Unrelated topic')
-        with self.assertRaises(d.DeliveryError):
-            g.workspace(self.original, 'unsafe')
+        self.root = Path(g.workspace(self.original, 'topic')['root'])
+        with self.assertRaisesRegex(d.DeliveryError, 'started from unrelated-topic'):
+            self.start()
+        self.assertFalse((self.root / '.veera' / 'state.json').exists())
 
     def test_open_blocker_blocks_final_push(self):
         import task_context as c
@@ -207,11 +209,26 @@ class GitDeliveryTests(unittest.TestCase):
         with self.assertRaises(d.DeliveryError):
             d.resume(self.root, report)
 
-    def test_dirty_original_refuses_workspace(self):
+    def test_dirty_original_starts_local_task_but_never_publishes_it(self):
         (self.original / 'peer.txt').write_text('peer work')
-        with self.assertRaises(d.DeliveryError):
-            g.workspace(self.original, 'another')
+        (self.original / 'app.py').write_text('value = 1  # peer edit\n')
+        self.root = Path(g.workspace(self.original, 'another')['root'])
         self.assertEqual((self.original / 'peer.txt').read_text(), 'peer work')
+        self.assertEqual(g.git(self.original, 'status', '--porcelain'), 'M app.py\n?? peer.txt')
+        with self.assertRaisesRegex(d.DeliveryError, 'clean checkout'):
+            self.start()
+        self.local_contract()
+        self.start()
+        d.phase(self.root, 'plan')
+        d.phase(self.root, 'implement')
+        (self.root / 'app.py').write_text('value = 2\n')
+        self.assertEqual(self.local_review()['test_count'], 1)
+        self.assertEqual(d.finish(self.root)['status'], 'verified-local')
+        # The task diff is its own change only and applies onto the dirty original.
+        patch_text = subprocess.run(['git', '-C', str(self.root), 'diff', '--binary', '--', 'app.py'], capture_output=True, text=True, check=True).stdout
+        self.assertNotIn('peer.txt', patch_text)
+        subprocess.run(['git', '-C', str(self.original), 'apply', '--check', '-'], input=patch_text, text=True, check=True)
+        self.assertEqual(g.git(self.remote, 'rev-parse', 'main'), self.initial)
 
     def test_dirty_main_blocks_publish_preserves_peer(self):
         self.start()

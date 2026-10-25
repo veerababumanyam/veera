@@ -23,7 +23,7 @@ Under the package root, read `docs/automatic-entry.md`, `docs/agent-contract.md`
 
 ## Establish the owned task
 
-1. Confirm the working directory is a Git repository root. `workspace` requires `main` checked out at exactly `main` with a clean tree.
+1. Confirm the working directory is a Git repository root. `workspace` starts from the checkout as it is: any branch, with uncommitted work snapshotted into the task and the original left untouched. Finish any merge or rebase in progress first.
 2. Create the owned worktree and enroll the session:
    `python scripts/delivery.py workspace --root <repo-root> --task <slug> --session-id <session_id>`
    The result returns the new worktree `root` and the owner `capability_file`.

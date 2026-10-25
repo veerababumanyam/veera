@@ -141,6 +141,33 @@ class WorkspaceRecoveryTests(unittest.TestCase):
         self.assertEqual(pointer.read_bytes(), before)
         self.assertIsNone(ownership.lookup(self.session))
 
+    def test_uncommitted_original_work_neither_blocks_nor_enters_recovery(self):
+        (self.original / 'app.py').write_text('value = "peer edit after the failure"\n')
+        result = self.recover()
+        self.assertTrue(result['recovered'])
+        self.assertEqual((result['base'], g.git(self.target, 'rev-parse', 'HEAD')), (self.tip, self.tip))
+        self.assertEqual((self.target / 'app.py').read_text(), 'value = 1\n')
+        self.assertEqual(self.metadata_path.read_bytes(), self.metadata)
+
+    def test_snapshot_based_workspace_recovers_on_its_recorded_start(self):
+        (self.original / 'app.py').write_text('value = "uncommitted"\n')
+        target = self.base / 'original-veera-snap'
+        mkdir = Path.mkdir
+
+        def fail_enrollment(path, *args, **kwargs):
+            if path == self.registry:
+                raise PermissionError('Fixture host directory permission denied')
+            return mkdir(path, *args, **kwargs)
+
+        with patch.object(Path, 'mkdir', fail_enrollment), self.assertRaises(PermissionError):
+            g.workspace(self.original, 'snap', 'snap-owner')
+        snapshot = g.git(target, 'rev-parse', 'HEAD')
+        self.assertEqual(g.git(target, 'rev-parse', 'HEAD^'), self.tip)
+        result = g.workspace(self.original, 'snap', 'snap-owner')
+        self.assertTrue(result['recovered'])
+        self.assertEqual((result['base'], result['head']), (snapshot, self.tip))
+        self.assertEqual((target / 'app.py').read_text(), 'value = "uncommitted"\n')
+
     def test_changed_original_head_cannot_recover(self):
         g.git(self.original, 'commit', '--allow-empty', '-m', 'Original moved')
         with self.assertRaises(d.DeliveryError):

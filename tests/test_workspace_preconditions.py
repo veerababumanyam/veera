@@ -1,4 +1,4 @@
-"""Workspace starts on ordinary repositories: any default branch name, tool output tolerated."""
+"""Workspace starts on ordinary repositories: any branch, uncommitted work snapshotted, tool output left behind."""
 import os
 from pathlib import Path
 import subprocess
@@ -59,23 +59,27 @@ class WorkspacePreconditionTests(unittest.TestCase):
         result = self.start()
         self.assertEqual(result['base_branch'], 'master')
         g.git(self.original, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main')
-        with self.assertRaisesRegex(d.DeliveryError, 'Start from main'):
-            self.start('other')
+        other = self.start('other')
+        self.assertEqual((other['base_branch'], other['start_branch'], other['on_default']), ('main', 'master', False))
 
-    def test_topic_branch_off_master_still_refused(self):
+    def test_topic_branch_starts_the_task_but_cannot_publish(self):
         self.repo('master')
         g.git(self.original, 'switch', '-q', '-c', 'topic')
         (self.original / 'topic.py').write_text('unrelated\n')
         g.git(self.original, 'add', 'topic.py')
         g.git(self.original, 'commit', '-qm', 'Unrelated topic')
-        with self.assertRaisesRegex(d.DeliveryError, 'Start from master'):
-            self.start()
+        tip = g.git(self.original, 'rev-parse', 'HEAD')
+        result = self.start()
+        self.assertEqual((result['base'], result['start_branch'], result['on_default'], result['base_branch']), (tip, 'topic', False, 'master'))
+        self.assertTrue((Path(result['root']) / 'topic.py').is_file())
+        with self.assertRaisesRegex(d.DeliveryError, 'started from topic'):
+            g.publishable(d.read_json(Path(result['root']) / '.veera' / 'workspace.json'))
 
-    def test_ambiguous_default_branch_refused(self):
-        self.repo('dev')
+    def test_ambiguous_default_branch_starts_from_head(self):
+        tip = self.repo('dev')
         g.git(self.original, 'branch', 'release')
-        with self.assertRaisesRegex(d.DeliveryError, 'default branch'):
-            self.start()
+        result = self.start()
+        self.assertEqual((result['base'], result['base_branch'], result['on_default']), (tip, None, False))
 
     def test_untracked_code_index_folder_does_not_block(self):
         tip = self.repo('master')
@@ -100,14 +104,17 @@ class WorkspacePreconditionTests(unittest.TestCase):
         self.assertFalse((Path(result['root']) / 'CLAUDE.md').exists())
         # The same names below the top level, or tracked and edited, are source.
         (self.original / 'pkg' / 'CLAUDE.md').write_text('peer notes\n')
-        with self.assertRaisesRegex(d.DeliveryError, 'pkg/CLAUDE.md'):
-            self.start('nested')
+        nested = self.start('nested')
+        self.assertEqual(nested['snapshot_paths'], ['pkg/CLAUDE.md'])
+        self.assertEqual((Path(nested['root']) / 'pkg' / 'CLAUDE.md').read_text(), 'peer notes\n')
+        self.assertFalse((Path(nested['root']) / 'CLAUDE.md').exists())
         (self.original / 'pkg' / 'CLAUDE.md').unlink()
         g.git(self.original, 'add', 'CLAUDE.md')
         g.git(self.original, 'commit', '-qm', 'Track instructions')
         (self.original / 'CLAUDE.md').write_text('edited\n')
-        with self.assertRaisesRegex(d.DeliveryError, r'uncommitted changes.*: CLAUDE\.md$'):
-            self.start('tracked')
+        tracked = self.start('tracked')
+        self.assertEqual(tracked['snapshot_paths'], ['CLAUDE.md'])
+        self.assertEqual((Path(tracked['root']) / 'CLAUDE.md').read_text(), 'edited\n')
 
     def test_appended_ignore_line_and_ignored_folder_do_not_block(self):
         self.repo('master')
@@ -121,29 +128,113 @@ class WorkspacePreconditionTests(unittest.TestCase):
         self.assertEqual((self.original / '.gitignore').read_text(), '*.pyc\n.code-index/\n')
         self.assertEqual((Path(result['root']) / '.gitignore').read_text(), '*.pyc\n')
 
-    def test_rewritten_ignore_file_blocks(self):
+    def test_rewritten_ignore_file_is_carried(self):
         self.repo('master')
         (self.original / '.gitignore').write_text('*.log\n')
-        with self.assertRaisesRegex(d.DeliveryError, r'uncommitted changes.*\.gitignore'):
-            self.start()
+        result = self.start()
+        self.assertEqual(result['snapshot_paths'], ['.gitignore'])
+        self.assertEqual((Path(result['root']) / '.gitignore').read_text(), '*.log\n')
 
-    def test_modified_or_staged_source_and_loose_files_block(self):
+    def untouched(self):
+        """Everything Git or a person can see of the original checkout."""
+        return (g.git(self.original, 'status', '--porcelain=v2', '-z', '--untracked-files=all'),
+                g.git(self.original, 'ls-files', '-s', '-z'),
+                g.git(self.original, 'for-each-ref', '--format=%(refname) %(objectname)', '--exclude=refs/heads/veera/*'),
+                g.git(self.original, 'stash', 'list'),
+                {str(p.relative_to(self.original)): p.read_bytes() for p in self.original.rglob('*') if p.is_file() and '.git' not in p.parts})
+
+    def test_uncommitted_work_is_the_task_start_and_the_original_is_untouched(self):
         self.repo('master')
+        (self.original / 'pkg' / 'old.py').write_text('old\n')
+        g.git(self.original, 'add', 'pkg/old.py')
+        g.git(self.original, 'commit', '-qm', 'Old module')
+        tip = g.git(self.original, 'rev-parse', 'HEAD')
         cases = [
-            lambda: (self.original / 'pkg' / 'core.py').write_text('value = 3\n'),
-            lambda: ((self.original / 'pkg' / 'new.py').write_text('new\n'), g.git(self.original, 'add', 'pkg/new.py')),
-            lambda: (self.original / 'notes.py').write_text('peer work\n'),
-            lambda: (self.original / 'pkg' / 'helper.py').write_text('peer work\n'),
-            lambda: g.git(self.original, 'rm', '-q', '--cached', 'pkg/core.py'),
+            ('modified', lambda: (self.original / 'pkg' / 'core.py').write_text('value = 3\n'), ['pkg/core.py']),
+            ('staged new', lambda: ((self.original / 'pkg' / 'new.py').write_text('new\n'), g.git(self.original, 'add', 'pkg/new.py')), ['pkg/new.py']),
+            ('loose top-level file', lambda: (self.original / 'notes.py').write_text('peer work\n'), ['notes.py']),
+            ('loose nested file', lambda: (self.original / 'pkg' / 'helper.py').write_text('peer work\n'), ['pkg/helper.py']),
+            ('deleted', lambda: (self.original / 'pkg' / 'old.py').unlink(), ['pkg/old.py']),
+            ('renamed', lambda: g.git(self.original, 'mv', 'pkg/old.py', 'pkg/renamed.py'), ['pkg/old.py', 'pkg/renamed.py']),
+            ('staged then edited', lambda: ((self.original / 'pkg' / 'core.py').write_text('value = 5\n'), g.git(self.original, 'add', 'pkg/core.py'),
+                                            (self.original / 'pkg' / 'core.py').write_text('value = 6\n')), ['pkg/core.py']),
         ]
-        for index, make in enumerate(cases):
-            with self.subTest(case=index):
+        for index, (label, make, paths) in enumerate(cases):
+            with self.subTest(case=label):
                 make()
-                with self.assertRaisesRegex(d.DeliveryError, 'uncommitted changes'):
-                    self.start('case-' + str(index))
-                self.assertFalse((self.base / ('project-veera-case-' + str(index))).exists())
+                before = self.untouched()
+                result = self.start('case-' + str(index))
+                self.assertEqual(self.untouched(), before)
+                root = Path(result['root'])
+                self.assertEqual((result['head'], g.git(root, 'rev-parse', 'HEAD^')), (tip, tip))
+                self.assertEqual(sorted(result['snapshot_paths']), sorted(paths))
+                self.assertEqual(g.git(root, 'log', '-1', '--format=%an <%ae>'), 'Veera <veera@localhost>')
+                self.assertIn('snapshot', result)
+                for name in paths:
+                    original, task = self.original / name, root / name
+                    self.assertEqual(task.read_bytes() if task.exists() else None, original.read_bytes() if original.exists() else None, name)
+                # The snapshot is committed, so the task starts clean and its diff is its own work.
+                g.clean(root)
+                self.assertEqual(g.git(root, 'diff', 'HEAD'), '')
+                with self.assertRaisesRegex(d.DeliveryError, 'clean checkout'):
+                    g.publishable(d.read_json(root / '.veera' / 'workspace.json'))
                 g.git(self.original, 'reset', '-q', '--hard')
                 g.git(self.original, 'clean', '-qfd')
+
+    def test_snapshot_leaves_tool_state_and_ignored_files_behind(self):
+        self.repo('master')
+        (self.original / 'pkg' / 'core.py').write_text('value = 7\n')
+        (self.original / 'graft').mkdir()
+        (self.original / 'graft' / 'graph.db').write_text('index')
+        (self.original / 'CLAUDE.md').write_text('notes\n')
+        (self.original / 'pkg' / 'core.pyc').write_bytes(b'\0')
+        result = self.start()
+        root = Path(result['root'])
+        self.assertEqual(result['snapshot_paths'], ['pkg/core.py'])
+        self.assertEqual(sorted(result['left_in_original']), ['CLAUDE.md', 'graft/'])
+        for name in ('graft', 'CLAUDE.md', 'pkg/core.pyc'):
+            self.assertFalse((root / name).exists(), name)
+        self.assertEqual(g.git(root, 'show', '--name-only', '--format=', 'HEAD'), 'pkg/core.py')
+
+    def test_staged_change_undone_in_the_worktree_needs_no_snapshot(self):
+        tip = self.repo('master')
+        g.git(self.original, 'rm', '-q', '--cached', 'pkg/core.py')
+        result = self.start()
+        self.assertEqual((result['base'], result['snapshot_paths'], result['on_default']), (tip, [], True))
+        self.assertNotIn('snapshot', result)
+        self.assertEqual((Path(result['root']) / 'pkg' / 'core.py').read_text(), 'value = 1\n')
+        g.publishable(d.read_json(Path(result['root']) / '.veera' / 'workspace.json'))
+
+    def test_operation_in_progress_or_conflicts_refuse_with_the_reason(self):
+        self.repo('master')
+        g.git(self.original, 'switch', '-q', '-c', 'side')
+        (self.original / 'pkg' / 'core.py').write_text('value = "side"\n')
+        g.git(self.original, 'commit', '-qam', 'Side')
+        g.git(self.original, 'switch', '-q', 'master')
+        (self.original / 'pkg' / 'core.py').write_text('value = "master"\n')
+        g.git(self.original, 'commit', '-qam', 'Master')
+        subprocess.run(['git', '-C', str(self.original), 'merge', 'side'], capture_output=True)
+        with self.assertRaisesRegex(d.DeliveryError, 'merge is in progress'):
+            self.start('merge')
+        g.git(self.original, 'merge', '--abort')
+        # A conflicted stash pop leaves unmerged paths with no operation running.
+        (self.original / 'pkg' / 'core.py').write_text('value = "stashed"\n')
+        g.git(self.original, 'stash', '-q')
+        (self.original / 'pkg' / 'core.py').write_text('value = "next"\n')
+        g.git(self.original, 'commit', '-qam', 'Next')
+        subprocess.run(['git', '-C', str(self.original), 'stash', 'pop'], capture_output=True)
+        with self.assertRaisesRegex(d.DeliveryError, 'Conflicted paths.*pkg/core.py'):
+            self.start('conflict')
+        self.assertFalse((self.base / 'project-veera-merge').exists())
+        self.assertFalse((self.base / 'project-veera-conflict').exists())
+
+    def test_repository_without_commits_refuses_plainly(self):
+        self.base = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.original = self.base / 'empty'
+        subprocess.run(['git', 'init', '-q', str(self.original)], check=True)
+        (self.original / 'app.py').write_text('x = 1\n')
+        with self.assertRaisesRegex(d.DeliveryError, 'no commits yet'):
+            self.start()
 
     def test_task_worktree_with_tool_folder_passes_init_cleanliness(self):
         self.repo('master')
