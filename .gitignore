@@ -26,12 +26,12 @@ htmlcov/
 
 # Dependency, build and test output.
 node_modules/
-dist/
-build/
-out/
+/dist/
+/build/
+/out/
 .next/
 coverage/
-target/
+/target/
 .cache/
 
 # Local settings and disposable files; keep example environment templates.
