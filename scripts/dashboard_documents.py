@@ -6,8 +6,8 @@ import re
 
 ROOT = Path(__file__).resolve().parents[1]
 MAX_BYTES = 256 * 1024
-TASK_DOCS = {'task-contract': 'Acceptance contract', 'task-discovery': 'Requirements & plan', 'task-intake': 'Intake & approvals', 'task-review': 'Independent review',
-             'task-decisions': 'Decisions', 'task-memory': 'Task memory', 'task-checkpoint': 'Checkpoint'}
+TASK_DOCS = {'task-contract': 'What success looks like', 'task-discovery': 'Requirements & plan', 'task-intake': 'Intake & approvals', 'task-review': 'Independent review',
+             'task-decisions': 'Decisions', 'task-memory': 'Task notes', 'task-checkpoint': 'Checkpoint'}
 
 
 def package_docs():

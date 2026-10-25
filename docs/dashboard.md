@@ -24,3 +24,9 @@ PYTHON PACKAGE/scripts/delivery.py dashboard-info --root TASK --session-id ACTUA
 ```
 
 The new dashboard skill handles explicit requests to open, find or share this task's local dashboard address. Automatic launch is prescribed by Build/Fix skill orchestration; the bare `init` library function stays free of browser/process side effects for embedded use and tests.
+
+## Write for the person following the task
+
+The dashboard starts with the user's request, a plain-language status and a “What happens next” explanation. It should be clear whether work is continuing, stopped, awaiting publication or finished locally. Never imply that a completed task was published unless the delivery record establishes that fact.
+
+Use everyday labels: “Making changes”, “Quality checks”, “What success looks like” and “Issues to resolve”. Show check names and results, with explicit waiting and running states. Time remaining is a task limit, not an estimated finish time. Keep raw event records behind “Technical details”; goals and next steps must be understandable without opening those records. Preserve readable text sizes and a layout that works on narrow screens.
